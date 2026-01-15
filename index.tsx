@@ -1,65 +1,42 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, createContext, useContext } from 'react';
 import { createRoot } from 'react-dom/client';
 import { GoogleGenAI } from "@google/genai";
+import { initializeApp } from "firebase/app";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
 import { 
-  LayoutGrid, 
-  Users, 
-  ShoppingCart, 
-  Package, 
-  BarChart3, 
-  Settings, 
-  Search, 
-  Bell, 
-  Menu, 
-  X, 
-  Plus, 
-  Filter, 
-  ArrowLeft,
-  MessageSquare,
-  Send,
-  Sparkles,
-  MoreHorizontal,
-  DollarSign,
-  TrendingUp,
-  Activity,
-  Trash2,
-  Save,
-  Download,
-  Store,
-  Link as LinkIcon,
-  LogOut,
-  CreditCard,
-  Facebook,
-  Instagram,
-  ChevronDown,
-  ChevronRight,
-  FileText,
-  Truck,
-  ClipboardList,
-  Scan,
-  Shield,
-  Zap,
-  Database,
-  Globe,
-  Mail
+  getFirestore, collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, 
+  query, orderBy, limit, where, serverTimestamp, writeBatch, Timestamp 
+} from "firebase/firestore";
+import { 
+  LayoutGrid, Users, ShoppingCart, Package, BarChart3, Settings, Search, Bell, Menu, X, Plus, 
+  Filter, ArrowLeft, MessageSquare, Send, Sparkles, MoreHorizontal, DollarSign, TrendingUp, 
+  Activity, Trash2, Save, Download, Store, Link as LinkIcon, LogOut, CreditCard, Facebook, 
+  Instagram, ChevronDown, ChevronRight, FileText, Truck, ClipboardList, Scan, Shield, Zap, 
+  Database, Globe, Mail, Moon, Sun, Lock, Loader2, AlertCircle, Printer, History
 } from 'lucide-react';
 import { 
-  AreaChart, 
-  Area, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip as RechartsTooltip, 
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  Legend,
-  PieChart,
-  Pie,
-  Cell
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, 
+  BarChart, Bar, Legend, PieChart, Pie, Cell 
 } from 'recharts';
 
-// --- MOCK DATA & TYPES ---
+// --- FIREBASE CONFIGURATION ---
+const firebaseConfig = {
+  apiKey: "AIzaSyCTrenpSXNMR78_5r3zXAmD5aXO7jFxxD4",
+  authDomain: "satika-cc4c3.firebaseapp.com",
+  projectId: "satika-cc4c3",
+  storageBucket: "satika-cc4c3.firebasestorage.app",
+  messagingSenderId: "370343505568",
+  appId: "1:370343505568:web:551fa56872706a0a8463c5"
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+// --- TYPES ---
+
+type Role = 'Owner' | 'Admin' | 'Worker';
 
 type Product = {
   id: string;
@@ -84,983 +61,801 @@ type Expense = {
 
 type Sale = {
   id: string;
-  date: string;
+  date: string; // ISO string
+  createdAt?: any;
   customer: string;
   amount: number;
   items: CartItem[];
   channel: string;
 };
 
-type User = {
+type AppUser = {
   id: string;
+  email: string;
   name: string;
-  handle: string;
-  role: 'Owner' | 'Admin' | 'Worker';
+  role: Role;
 };
 
-// Initial Data
-const INITIAL_PRODUCTS: Product[] = [
-  { id: '1', name: 'Jamdani print Pink', sku: 'SKU024', price: 3580, stock: 0, location: 'Indie-Loom', category: 'Saree' },
-  { id: '2', name: 'organsa', sku: 'SKU009', price: 4500, stock: 1, location: 'Indie-Loom', category: 'Fabric' },
-  { id: '3', name: 'Rayon top with Kalamkari print', sku: 'SKU003', price: 1500, stock: 1, location: 'Indie-Loom', category: 'Top' },
-  { id: '4', name: 'Modal', sku: 'SKU015', price: 4900, stock: 0, location: 'Indie-Loom', category: 'Fabric' },
-  { id: '5', name: 'crape', sku: 'SKU020', price: 2550, stock: 1, location: 'Indie-Loom', category: 'Fabric' },
-  { id: '6', name: 'Saree-1', sku: 'INA 099', price: 2000, stock: 1, location: 'Inara-WareHouse', category: 'Saree' },
-  { id: '7', name: 'Cotton', sku: 'SKU018', price: 2300, stock: 1, location: 'Indie-Loom', category: 'Fabric' },
-  { id: '8', name: 'Kotta with lace work grey', sku: 'SKU016', price: 2700, stock: -1, location: 'Indie-Loom', category: 'Saree' },
-  { id: '9', name: 'Kotta with thread work', sku: 'SKU010', price: 1550, stock: 1, location: 'Indie-Loom', category: 'Saree' },
-  { id: '10', name: 'white', sku: 'SKU005', price: 3500, stock: 0, location: 'Indie-Loom', category: 'Fabric' },
-];
+type AuditLog = {
+  id: string;
+  action: string;
+  details: string;
+  user: string;
+  timestamp: any;
+};
 
-const INITIAL_EXPENSES: Expense[] = [
-  { id: '1', date: '2026-01-07', description: 'Indee_Loom_MultiBrand_Rent', amount: 5900, category: 'Rent', assignedTo: 'Indie-Loom' },
-  { id: '2', date: '2026-01-05', description: 'Electricity Bill', amount: 1200, category: 'Utilities', assignedTo: 'Indie-Loom' },
-];
+// --- AUDIT LOGGER ---
+const logAudit = async (user: AppUser | null, action: string, details: string) => {
+  if (!user) return;
+  try {
+    await addDoc(collection(db, 'audit_logs'), {
+      action,
+      details,
+      user: user.email,
+      timestamp: serverTimestamp()
+    });
+  } catch (e) {
+    console.error("Failed to log audit", e);
+  }
+};
 
-const INITIAL_SALES: Sale[] = [
-  { id: '1', date: '2026-01-09', customer: 'Walk-in', amount: 1550, items: [], channel: 'Store' },
-  { id: '2', date: '2026-01-09', customer: 'Walk-in', amount: 3500, items: [], channel: 'Store' },
-  { id: '3', date: '2026-01-09', customer: 'AK', amount: 2500, items: [], channel: 'Store' },
-  { id: '4', date: '2026-01-09', customer: 'Walk-in', amount: 4900, items: [], channel: 'Store' },
-  { id: '5', date: '2026-01-07', customer: 'Cx_Inde_Loome', amount: 7250, items: [], channel: 'Store' },
-];
+// --- CONTEXTS ---
 
-const INITIAL_USERS: User[] = [
-  { id: '1', name: 'EMP01', handle: '@emp01', role: 'Worker' },
-  { id: '2', name: 'ADM01', handle: '@adm01', role: 'Admin' },
-  { id: '3', name: 'Owner', handle: '@ak', role: 'Owner' },
-];
+interface AuthContextType {
+  user: AppUser | null;
+  loading: boolean;
+  login: (email: string, password: string) => Promise<void>;
+  logout: () => Promise<void>;
+}
 
-// --- APP COMPONENT ---
+const AuthContext = createContext<AuthContextType>(null!);
 
-const App = () => {
-  // State
-  const [currentView, setCurrentView] = useState('home');
-  const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
-  const [cart, setCart] = useState<CartItem[]>([]);
-  const [expenses, setExpenses] = useState<Expense[]>(INITIAL_EXPENSES);
-  const [sales, setSales] = useState<Sale[]>(INITIAL_SALES);
-  const [users, setUsers] = useState<User[]>(INITIAL_USERS);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [currentOrg, setCurrentOrg] = useState('INARA');
+interface ThemeContextType {
+  isDarkMode: boolean;
+  toggleTheme: () => void;
+}
 
-  // Computed Dashboard Stats
-  const totalRevenue = sales.reduce((sum, s) => sum + s.amount, 0);
-  const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
-  const netProfit = totalRevenue - totalExpenses;
-  const lowStockCount = products.filter(p => p.stock < 2).length;
+const ThemeContext = createContext<ThemeContextType>(null!);
 
-  // --- SUB-COMPONENTS ---
+// --- PROVIDERS ---
 
-  // 1. Sidebar Navigation
-  const Sidebar = () => {
-    const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
-      'sales': true,
-      'inventory': false,
-      'purchases': false,
-      'items': true,
+const AuthProvider = ({ children }: { children: React.ReactNode }) => {
+  const [user, setUser] = useState<AppUser | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      if (firebaseUser) {
+        const role = firebaseUser.email?.includes('worker') ? 'Worker' : (firebaseUser.email?.includes('admin') ? 'Admin' : 'Owner');
+        setUser({
+          id: firebaseUser.uid,
+          email: firebaseUser.email || '',
+          name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
+          role: role as Role
+        });
+      } else {
+        setUser(null);
+      }
+      setLoading(false);
+    });
+    return unsubscribe;
+  }, []);
+
+  const login = async (email, password) => {
+    await signInWithEmailAndPassword(auth, email, password);
+  };
+
+  const logout = async () => {
+    await signOut(auth);
+  };
+
+  return (
+    <AuthContext.Provider value={{ user, loading, login, logout }}>
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('theme') === 'dark' || 
+             (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
+    }
+  }, [isDarkMode]);
+
+  const toggleTheme = () => setIsDarkMode(!isDarkMode);
+
+  return (
+    <ThemeContext.Provider value={{ isDarkMode, toggleTheme }}>
+      {children}
+    </ThemeContext.Provider>
+  );
+};
+
+// --- AUTH COMPONENTS ---
+
+const LoginScreen = () => {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const { login } = useContext(AuthContext);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await login(email, password);
+    } catch (err: any) {
+      setError("Login failed: " + err.message);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col justify-center items-center p-4">
+      <div className="max-w-md w-full bg-white dark:bg-slate-800 rounded-2xl shadow-xl p-8 border border-slate-200 dark:border-slate-700">
+        <div className="text-center mb-8">
+          <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">SATIKA ERP</h1>
+          <p className="text-slate-500 dark:text-slate-400">Sign in to your account</p>
+        </div>
+        
+        {error && (
+           <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-300 text-sm rounded-lg flex items-center gap-2">
+             <AlertCircle className="w-4 h-4" /> {error}
+           </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Email Address</label>
+            <input 
+              type="email" 
+              required
+              className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-purple-500 outline-none transition-all"
+              placeholder="name@company.com"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Password</label>
+            <input 
+              type="password" 
+              required
+              className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-purple-500 outline-none transition-all"
+              placeholder="••••••••"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+            />
+          </div>
+          <button 
+            type="submit"
+            className="w-full py-3 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg shadow-lg hover:shadow-purple-500/30 transition-all duration-200"
+          >
+            Sign In
+          </button>
+        </form>
+        <div className="mt-6 text-center text-xs text-slate-400">
+           Enter your registered Satika ERP credentials.
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- CUSTOM HOOKS ---
+
+function useFirestoreCollection<T>(collectionName: string, orderField?: string) {
+  const [data, setData] = useState<T[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let q = query(collection(db, collectionName));
+    if (orderField) {
+      q = query(collection(db, collectionName), orderBy(orderField, 'desc'));
+    }
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const items = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as T[];
+      setData(items);
+      setLoading(false);
+    }, (error) => {
+      console.error(`Error fetching ${collectionName}:`, error);
+      setLoading(false);
     });
 
-    const toggleGroup = (groupId: string) => {
-      setExpandedGroups(prev => ({...prev, [groupId]: !prev[groupId]}));
+    return () => unsubscribe();
+  }, [collectionName, orderField]);
+
+  return { data, loading };
+}
+
+// --- SUB-VIEWS ---
+
+const ItemsView = ({ products }: { products: Product[] }) => {
+  const { user } = useContext(AuthContext);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [newItem, setNewItem] = useState({ name: '', sku: '', price: '', stock: '', category: 'General' });
+
+  const handleAddItem = async () => {
+    if (!newItem.name || !newItem.price) return;
+    try {
+      await addDoc(collection(db, 'products'), {
+        name: newItem.name,
+        sku: newItem.sku,
+        price: Number(newItem.price),
+        stock: Number(newItem.stock),
+        category: newItem.category,
+        location: 'Warehouse'
+      });
+      await logAudit(user, 'CREATE_ITEM', `Created item ${newItem.name}`);
+      setShowAddModal(false);
+      setNewItem({ name: '', sku: '', price: '', stock: '', category: 'General' });
+    } catch (e) {
+      console.error("Error adding item: ", e);
+    }
+  };
+
+  const handleDeleteItem = async (id: string, name: string) => {
+    if (confirm(`Delete ${name}?`)) {
+      await deleteDoc(doc(db, 'products', id));
+      await logAudit(user, 'DELETE_ITEM', `Deleted item ${name}`);
+    }
+  };
+
+  return (
+    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+      <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center bg-orange-50/30 dark:bg-orange-900/10">
+        <h2 className="text-orange-800 dark:text-orange-300 font-bold text-lg flex items-center gap-2">
+          <Package className="w-5 h-5" /> Items ({products.length})
+        </h2>
+        <button 
+          onClick={() => setShowAddModal(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg text-sm hover:bg-orange-700 shadow-sm"
+        >
+           <Plus className="w-4 h-4" /> New Item
+        </button>
+      </div>
+      
+      {/* Add Modal */}
+      {showAddModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+           <div className="bg-white dark:bg-slate-800 p-6 rounded-xl w-full max-w-md shadow-2xl">
+              <h3 className="text-lg font-bold mb-4 dark:text-white">Add New Item</h3>
+              <div className="space-y-3">
+                 <input placeholder="Item Name" className="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} />
+                 <input placeholder="SKU" className="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" value={newItem.sku} onChange={e => setNewItem({...newItem, sku: e.target.value})} />
+                 <div className="flex gap-3">
+                    <input type="number" placeholder="Price" className="w-1/2 p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" value={newItem.price} onChange={e => setNewItem({...newItem, price: e.target.value})} />
+                    <input type="number" placeholder="Stock" className="w-1/2 p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" value={newItem.stock} onChange={e => setNewItem({...newItem, stock: e.target.value})} />
+                 </div>
+                 <select className="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" value={newItem.category} onChange={e => setNewItem({...newItem, category: e.target.value})}>
+                    <option>General</option>
+                    <option>Saree</option>
+                    <option>Fabric</option>
+                    <option>Top</option>
+                 </select>
+              </div>
+              <div className="flex gap-3 mt-6">
+                 <button onClick={() => setShowAddModal(false)} className="flex-1 py-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg">Cancel</button>
+                 <button onClick={handleAddItem} className="flex-1 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700">Save</button>
+              </div>
+           </div>
+        </div>
+      )}
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm text-slate-600 dark:text-slate-400">
+          <thead className="bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white font-semibold border-b border-slate-200 dark:border-slate-700">
+            <tr>
+              <th className="px-6 py-3">Name</th>
+              <th className="px-6 py-3">SKU</th>
+              <th className="px-6 py-3">Stock</th>
+              <th className="px-6 py-3">Rate</th>
+              <th className="px-6 py-3 text-right">Action</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+            {products.map(product => (
+              <tr key={product.id} className="hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors group">
+                <td className="px-6 py-3 font-medium text-slate-900 dark:text-white group-hover:text-orange-600">{product.name}</td>
+                <td className="px-6 py-3">{product.sku}</td>
+                <td className="px-6 py-3">
+                   <span className={`font-medium px-2 py-1 rounded text-xs ${product.stock < 5 ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'}`}>
+                     {product.stock} Units
+                   </span>
+                </td>
+                <td className="px-6 py-3">₹{product.price}</td>
+                <td className="px-6 py-3 text-right">
+                  <button onClick={(e) => { e.stopPropagation(); handleDeleteItem(product.id, product.name); }} className="text-slate-400 hover:text-red-500 transition-colors">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
+const BillingView = ({ products }: { products: Product[] }) => {
+  const { user } = useContext(AuthContext);
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [customerName, setCustomerName] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [lastInvoice, setLastInvoice] = useState<Sale | null>(null);
+
+  const filteredProducts = products.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()));
+
+  const addToCart = (product: Product) => {
+    if (product.stock <= 0) return alert("Item out of stock!");
+    setCart(prev => {
+      const existing = prev.find(item => item.id === product.id);
+      if (existing) {
+        if (existing.qty >= product.stock) {
+           alert("Cannot add more than available stock");
+           return prev;
+        }
+        return prev.map(item => item.id === product.id ? { ...item, qty: item.qty + 1 } : item);
+      }
+      return [...prev, { ...product, qty: 1 }];
+    });
+  };
+
+  const removeFromCart = (id: string) => {
+     setCart(prev => prev.filter(item => item.id !== id));
+  };
+
+  const cartTotal = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+
+  const handleCompleteSale = async () => {
+    if (cart.length === 0) return;
+    
+    const saleData = {
+      date: new Date().toISOString(),
+      createdAt: serverTimestamp(),
+      customer: customerName || 'Walk-in',
+      amount: cartTotal,
+      items: cart,
+      channel: 'Store'
     };
 
+    try {
+      // 1. Write Sale
+      const saleRef = await addDoc(collection(db, 'sales'), saleData);
+      
+      // 2. Update Inventory (Atomic)
+      const batch = writeBatch(db);
+      cart.forEach(item => {
+         const productRef = doc(db, 'products', item.id);
+         const newStock = Math.max(0, item.stock - item.qty);
+         batch.update(productRef, { stock: newStock });
+      });
+      await batch.commit();
+
+      // 3. Log
+      await logAudit(user, 'SALE', `Sold ₹${cartTotal} to ${saleData.customer}`);
+
+      // 4. Reset & Print
+      setLastInvoice({ ...saleData, id: saleRef.id } as Sale);
+      setCart([]);
+      setCustomerName('');
+      
+      // Trigger Print after short delay
+      setTimeout(() => window.print(), 500);
+
+    } catch (e) {
+      console.error("Sale failed", e);
+      alert("Transaction failed. Check console.");
+    }
+  };
+
+  return (
+    <div className="flex h-[calc(100vh-100px)] gap-6 no-print">
+      <div className="flex-1 flex flex-col">
+         {/* Search */}
+         <div className="relative mb-6">
+            <Search className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input 
+              type="text" 
+              placeholder="Search products for billing..." 
+              className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              autoFocus
+            />
+         </div>
+         
+         {/* Product Grid */}
+         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 overflow-y-auto pr-2 pb-20">
+            {filteredProducts.map(product => (
+               <div 
+                 key={product.id} 
+                 onClick={() => addToCart(product)}
+                 className={`bg-white dark:bg-slate-800 p-4 rounded-xl border transition-all cursor-pointer group ${
+                    product.stock <= 0 
+                      ? 'opacity-50 border-slate-200 dark:border-slate-700 cursor-not-allowed' 
+                      : 'border-slate-200 dark:border-slate-700 hover:border-emerald-500 hover:shadow-md'
+                 }`}
+               >
+                  <h3 className="font-medium text-slate-900 dark:text-white line-clamp-1">{product.name}</h3>
+                  <div className="flex justify-between items-end mt-2">
+                     <div>
+                        <p className="text-lg font-bold text-slate-900 dark:text-white">₹{product.price}</p>
+                        <p className={`text-xs ${product.stock < 5 ? 'text-red-500' : 'text-slate-500'}`}>{product.stock} left</p>
+                     </div>
+                     <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center group-hover:bg-emerald-500 group-hover:text-white transition-colors">
+                        <Plus className="w-4 h-4" />
+                     </div>
+                  </div>
+               </div>
+            ))}
+         </div>
+      </div>
+
+      {/* Cart Sidebar */}
+      <div className="w-96 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex flex-col h-full rounded-xl shadow-lg overflow-hidden">
+         <div className="p-4 border-b border-slate-200 dark:border-slate-700 bg-emerald-50/50 dark:bg-emerald-900/10">
+            <h2 className="font-semibold text-emerald-800 dark:text-emerald-300 flex items-center gap-2">
+               <ShoppingCart className="w-4 h-4" /> Current Sale
+            </h2>
+         </div>
+         
+         <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            {cart.length === 0 ? (
+               <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-2">
+                  <ShoppingCart className="w-12 h-12 opacity-20" />
+                  <span className="text-sm">Cart is empty</span>
+               </div>
+            ) : (
+               cart.map(item => (
+                  <div key={item.id} className="flex justify-between items-start text-sm pb-3 border-b border-slate-100 dark:border-slate-700 last:border-0 group">
+                     <div>
+                        <p className="font-medium text-slate-800 dark:text-white">{item.name}</p>
+                        <p className="text-slate-500 text-xs">{item.qty} x ₹{item.price}</p>
+                     </div>
+                     <div className="flex items-center gap-3">
+                        <p className="font-semibold text-slate-900 dark:text-white">₹{item.price * item.qty}</p>
+                        <button onClick={() => removeFromCart(item.id)} className="text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
+                           <X className="w-4 h-4" />
+                        </button>
+                     </div>
+                  </div>
+               ))
+            )}
+         </div>
+         
+         <div className="p-4 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 space-y-4">
+            <div className="flex justify-between items-center text-lg font-bold text-slate-900 dark:text-white">
+               <span>Total</span>
+               <span>₹{cartTotal.toLocaleString()}</span>
+            </div>
+            <input 
+               type="text" 
+               placeholder="Customer Name (Optional)" 
+               className="w-full px-4 py-2 border border-slate-200 dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-800 dark:text-white focus:outline-none focus:border-emerald-500"
+               value={customerName}
+               onChange={e => setCustomerName(e.target.value)}
+            />
+            <button 
+               onClick={handleCompleteSale}
+               disabled={cart.length === 0}
+               className="w-full py-3 bg-emerald-600 text-white rounded-lg font-medium hover:bg-emerald-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+               <Printer className="w-4 h-4" /> Complete & Print
+            </button>
+         </div>
+      </div>
+      
+      {/* Hidden Invoice Template for Print */}
+      {lastInvoice && (
+        <div id="invoice-print-area" className="hidden">
+           <div className="p-8 max-w-2xl mx-auto border border-gray-200 mt-10">
+              <div className="text-center mb-8">
+                 <h1 className="text-3xl font-bold mb-2">INARA DESIGNS</h1>
+                 <p className="text-gray-500">Invoice #{lastInvoice.id.slice(0,8).toUpperCase()}</p>
+                 <p className="text-sm text-gray-500">{new Date(lastInvoice.date).toLocaleString()}</p>
+              </div>
+              <div className="mb-8">
+                 <p><strong>Customer:</strong> {lastInvoice.customer}</p>
+              </div>
+              <table className="w-full text-left mb-8 border-collapse">
+                 <thead>
+                    <tr className="border-b border-gray-300">
+                       <th className="py-2">Item</th>
+                       <th className="py-2 text-right">Qty</th>
+                       <th className="py-2 text-right">Price</th>
+                       <th className="py-2 text-right">Total</th>
+                    </tr>
+                 </thead>
+                 <tbody>
+                    {lastInvoice.items.map((item, i) => (
+                       <tr key={i} className="border-b border-gray-100">
+                          <td className="py-2">{item.name}</td>
+                          <td className="py-2 text-right">{item.qty}</td>
+                          <td className="py-2 text-right">₹{item.price}</td>
+                          <td className="py-2 text-right">₹{item.price * item.qty}</td>
+                       </tr>
+                    ))}
+                 </tbody>
+              </table>
+              <div className="text-right text-xl font-bold">
+                 Total: ₹{lastInvoice.amount}
+              </div>
+              <div className="mt-12 text-center text-sm text-gray-400">
+                 Thank you for shopping with Inara Designs!
+              </div>
+           </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const SalesOrdersView = () => {
+   const { data: sales, loading } = useFirestoreCollection<Sale>('sales', 'createdAt');
+   
+   if (loading) return <div className="p-10 text-center"><Loader2 className="w-8 h-8 animate-spin mx-auto text-purple-600" /></div>;
+
+   return (
+     <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+        <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center">
+           <h2 className="text-slate-800 dark:text-white font-bold text-lg flex items-center gap-2">
+              <History className="w-5 h-5" /> Sales History
+           </h2>
+        </div>
+        <div className="overflow-x-auto">
+           <table className="w-full text-left text-sm text-slate-600 dark:text-slate-400">
+              <thead className="bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white font-semibold border-b border-slate-200 dark:border-slate-700">
+                 <tr>
+                    <th className="px-6 py-3">Date</th>
+                    <th className="px-6 py-3">Invoice ID</th>
+                    <th className="px-6 py-3">Customer</th>
+                    <th className="px-6 py-3 text-right">Amount</th>
+                 </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                 {sales.map(sale => (
+                    <tr key={sale.id} className="hover:bg-slate-50 dark:hover:bg-slate-700">
+                       <td className="px-6 py-3">{new Date(sale.date).toLocaleDateString()}</td>
+                       <td className="px-6 py-3 font-mono text-xs">{sale.id.slice(0,8).toUpperCase()}</td>
+                       <td className="px-6 py-3">{sale.customer}</td>
+                       <td className="px-6 py-3 text-right font-medium text-emerald-600 dark:text-emerald-400">₹{sale.amount}</td>
+                    </tr>
+                 ))}
+              </tbody>
+           </table>
+        </div>
+     </div>
+   );
+};
+
+const SetupView = () => {
+   const { user } = useContext(AuthContext);
+   const { data: audits } = useFirestoreCollection<AuditLog>('audit_logs', 'timestamp');
+
+   // Seed Data Function
+   const seedData = async () => {
+      if(!confirm("This will add sample data to your database. Continue?")) return;
+      const batch = writeBatch(db);
+      
+      const products = [
+         { name: 'Jamdani Saree', sku: 'SKU001', price: 3500, stock: 10, category: 'Saree' },
+         { name: 'Cotton Fabric', sku: 'SKU002', price: 500, stock: 50, category: 'Fabric' },
+         { name: 'Silk Kurti', sku: 'SKU003', price: 1200, stock: 3, category: 'Top' }
+      ];
+
+      products.forEach(p => {
+         const ref = doc(collection(db, 'products'));
+         batch.set(ref, { ...p, location: 'Store' });
+      });
+
+      await batch.commit();
+      await logAudit(user, 'SEED_DATA', 'Populated sample data');
+      alert("Data seeded successfully!");
+   };
+
+   return (
+    <div className="space-y-6">
+       <div className="flex justify-between items-center bg-white dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
+          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Setup & Administration</h2>
+          <button onClick={seedData} className="px-4 py-2 bg-purple-100 text-purple-700 rounded-lg text-sm font-medium hover:bg-purple-200 transition-colors">
+             Initialize Demo Data
+          </button>
+       </div>
+
+       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+             <h3 className="font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+                <Shield className="w-5 h-5 text-purple-600" /> Audit Logs
+             </h3>
+             <div className="h-64 overflow-y-auto space-y-3 pr-2">
+                {audits.map(log => (
+                   <div key={log.id} className="text-sm p-3 bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-100 dark:border-slate-700">
+                      <div className="flex justify-between mb-1">
+                         <span className="font-bold text-slate-700 dark:text-slate-300">{log.action}</span>
+                         <span className="text-xs text-slate-400">
+                            {log.timestamp?.seconds ? new Date(log.timestamp.seconds * 1000).toLocaleString() : 'Just now'}
+                         </span>
+                      </div>
+                      <p className="text-slate-500 dark:text-slate-400 text-xs mb-1">{log.details}</p>
+                      <p className="text-xs text-purple-500">User: {log.user}</p>
+                   </div>
+                ))}
+             </div>
+          </div>
+
+          <div className="space-y-6">
+             {["General Settings", "User Management", "Notifications"].map((title, i) => (
+                <div key={i} className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 flex justify-between items-center cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700">
+                   <span className="font-medium text-slate-700 dark:text-slate-200">{title}</span>
+                   <ChevronRight className="w-4 h-4 text-slate-400" />
+                </div>
+             ))}
+          </div>
+       </div>
+    </div>
+   );
+};
+
+// --- MAIN APP LOGIC ---
+
+const AppContent = () => {
+  const { user, logout } = useContext(AuthContext);
+  const { isDarkMode, toggleTheme } = useContext(ThemeContext);
+  
+  // Real-time Data Hooks
+  const { data: products, loading: pLoading } = useFirestoreCollection<Product>('products');
+  const { data: sales, loading: sLoading } = useFirestoreCollection<Sale>('sales');
+  
+  // State
+  const [currentView, setCurrentView] = useState('home');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [globalSearch, setGlobalSearch] = useState('');
+
+  // Computed Stats
+  const totalRevenue = sales.reduce((sum, s) => sum + s.amount, 0);
+  const lowStockCount = products.filter(p => p.stock < 5).length;
+
+  const Sidebar = () => {
     const navItems = [
-      { id: 'dashboard', label: 'Home', icon: LayoutGrid, color: 'text-purple-400', type: 'link' },
-      { 
-        id: 'items', label: 'Items', icon: Package, color: 'text-orange-400', type: 'group',
-        children: [
-          { id: 'items_list', label: 'Items' },
-          { id: 'item_groups', label: 'Item Groups' },
-        ]
-      },
-      { 
-        id: 'inventory', label: 'Inventory', icon: ClipboardList, color: 'text-amber-400', type: 'group',
-        children: [
-          { id: 'inv_adjustments', label: 'Inventory Adjustments' },
-          { id: 'inv_packages', label: 'Packages' },
-          { id: 'inv_shipments', label: 'Shipments' },
-        ]
-      },
-      { 
-        id: 'sales', label: 'Sales', icon: ShoppingCart, color: 'text-emerald-400', type: 'group',
-        children: [
-          { id: 'billing', label: 'POS / Billing' },
-          { id: 'sales_customers', label: 'Customers' },
-          { id: 'sales_orders', label: 'Sales Orders' },
-          { id: 'sales_invoices', label: 'Invoices' },
-        ]
-      },
-      { 
-        id: 'purchases', label: 'Purchases', icon: Truck, color: 'text-red-400', type: 'group',
-        children: [
-          { id: 'purchases_vendors', label: 'Vendors' },
-          { id: 'expenses', label: 'Expenses' },
-          { id: 'purchases_orders', label: 'Purchase Orders' },
-        ]
-      },
-      { id: 'documents', label: 'Documents', icon: FileText, color: 'text-gray-400', type: 'link' },
-      { id: 'reports', label: 'Reports', icon: BarChart3, color: 'text-blue-400', type: 'link' },
-      { id: 'integrations', label: 'Integrations', icon: LinkIcon, color: 'text-pink-400', type: 'link' },
-      { id: 'settings', label: 'Setup', icon: Settings, color: 'text-gray-300', type: 'link' },
+      { id: 'dashboard', label: 'Home', icon: LayoutGrid, allowed: true },
+      { id: 'items_list', label: 'Items', icon: Package, allowed: true },
+      { id: 'billing', label: 'POS / Billing', icon: ShoppingCart, allowed: true },
+      { id: 'sales_orders', label: 'Sales History', icon: History, allowed: true },
+      { id: 'documents', label: 'Documents', icon: FileText, allowed: true },
+      { id: 'settings', label: 'Setup', icon: Settings, allowed: user?.role === 'Owner' },
     ];
 
     return (
-      <aside className={`bg-[#1e1e2d] text-gray-400 transition-all duration-300 flex flex-col h-screen overflow-y-auto ${sidebarOpen ? 'w-64' : 'w-20'}`}>
+      <aside className={`bg-[#1e1e2d] text-gray-400 flex flex-col h-screen border-r border-gray-800 transition-all duration-300 ${sidebarOpen ? 'w-64' : 'w-20'} no-print`}>
         <div className="h-16 flex items-center px-4 border-b border-gray-800 shrink-0">
-          <button onClick={() => setCurrentView('home')} className="hover:text-white transition-colors">
-             <LayoutGrid className="w-6 h-6" />
-          </button>
-          {sidebarOpen && <span className="ml-4 font-bold text-white tracking-wide">INARA DESIGNS</span>}
+          <LayoutGrid className="w-6 h-6 text-purple-500" />
+          {sidebarOpen && <span className="ml-4 font-bold text-white tracking-wide">INARA</span>}
         </div>
-
         <nav className="flex-1 py-4 space-y-1 px-3">
-          {navItems.map((item) => {
-            if (item.type === 'group' && sidebarOpen) {
-              return (
-                <div key={item.id} className="mb-2">
-                  <button
-                    onClick={() => toggleGroup(item.id)}
-                    className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg hover:bg-white/5 hover:text-white transition-colors group"
-                  >
-                    <div className="flex items-center">
-                      <item.icon className={`w-5 h-5 mr-3 ${item.color}`} />
-                      <span className="font-medium text-sm">{item.label}</span>
-                    </div>
-                    {expandedGroups[item.id] ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                  </button>
-                  {expandedGroups[item.id] && (
-                    <div className="ml-9 space-y-1 mt-1 border-l border-gray-700 pl-2">
-                      {item.children?.map(child => (
-                        <button
-                          key={child.id}
-                          onClick={() => setCurrentView(child.id)}
-                          className={`w-full text-left px-3 py-1.5 text-sm rounded-md transition-colors ${
-                            currentView === child.id ? 'text-white bg-white/10' : 'text-gray-500 hover:text-gray-300'
-                          }`}
-                        >
-                          {child.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            }
-            
-            // Link or collapsed view
-            return (
-              <button
-                key={item.id}
-                onClick={() => item.type === 'group' ? toggleGroup(item.id) : setCurrentView(item.id)}
-                className={`w-full flex items-center px-3 py-2.5 rounded-lg transition-colors group ${
-                  currentView === item.id 
-                    ? 'bg-white/10 text-white' 
-                    : 'hover:bg-white/5 hover:text-white'
-                }`}
-              >
-                <item.icon className={`w-5 h-5 ${sidebarOpen ? 'mr-3' : 'mx-auto'} ${item.color}`} />
-                {sidebarOpen && <span className="font-medium text-sm">{item.label}</span>}
-              </button>
-            );
-          })}
+          {navItems.filter(i => i.allowed).map((item) => (
+            <button key={item.id} onClick={() => setCurrentView(item.id)} className={`w-full flex items-center px-3 py-2.5 rounded-lg transition-colors group ${currentView === item.id ? 'bg-white/10 text-white' : 'hover:bg-white/5 hover:text-white'}`}>
+              <item.icon className={`w-5 h-5 ${sidebarOpen ? 'mr-3' : 'mx-auto'}`} />
+              {sidebarOpen && <span className="font-medium text-sm">{item.label}</span>}
+            </button>
+          ))}
         </nav>
-
         <div className="p-4 border-t border-gray-800 shrink-0">
-          <button className="flex items-center w-full text-sm hover:text-white transition-colors">
-             <div className="w-8 h-8 rounded-full bg-purple-600 flex items-center justify-center text-white font-bold mr-3">
-               JD
-             </div>
-             {sidebarOpen && (
-               <div className="text-left">
-                 <p className="text-white font-medium">John Doe</p>
-                 <p className="text-xs">Administrator</p>
-               </div>
-             )}
-          </button>
+           <button onClick={logout} className="flex items-center w-full text-sm text-red-400 hover:text-red-300">
+              <LogOut className={`w-5 h-5 ${sidebarOpen ? 'mr-3' : 'mx-auto'}`} />
+              {sidebarOpen && "Sign Out"}
+           </button>
         </div>
       </aside>
     );
   };
 
-  // 2. Setup / Settings View (New Grid Layout)
-  const SetupView = () => {
-    const sections = [
-      {
-        title: "General",
-        icon: Settings,
-        links: ["Personal Settings", "Users", "Company Settings", "Calendar Booking", "Motivator"]
-      },
-      {
-        title: "Security Control",
-        icon: Shield,
-        links: ["Profiles", "Roles and Sharing", "Zoho Mail Add-on Users", "Compliance Settings", "Territory Management", "Security Policies"]
-      },
-      {
-        title: "Channels",
-        icon: Mail,
-        links: ["Email", "Telephony", "Business Messaging", "Notification SMS", "Webforms", "Social", "Chat", "Portals"]
-      },
-      {
-        title: "Customization",
-        icon: Zap,
-        links: ["Modules and Fields", "Pipelines", "Wizards", "Kiosk Studio", "Canvas", "Customize Home page", "Templates"]
-      },
-      {
-        title: "Automation",
-        icon: Zap,
-        links: ["Workflow Rules", "Actions", "Schedules", "Assignment", "Case Escalation Rules", "Scoring Rules"]
-      },
-      {
-        title: "Data Administration",
-        icon: Database,
-        links: ["Import/Export", "Data Backup", "Storage", "Recycle Bin", "Audit Log"]
-      }
-    ];
-
-    return (
-      <div className="space-y-6">
-        <div className="flex justify-between items-center bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-          <h2 className="text-2xl font-bold text-gray-900">Setup</h2>
-          <div className="relative w-64">
-             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-             <input type="text" placeholder="Search Setup" className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 focus:bg-white focus:ring-1 focus:ring-purple-500 outline-none" />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-           {sections.map((section, idx) => (
-             <div key={idx} className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
-               <div className="flex items-center gap-2 mb-4">
-                 <section.icon className="w-5 h-5 text-gray-600" />
-                 <h3 className="font-bold text-gray-900">{section.title}</h3>
-               </div>
-               <ul className="space-y-2">
-                 {section.links.map((link, i) => (
-                   <li key={i} className="text-sm text-gray-500 hover:text-purple-600 cursor-pointer transition-colors">
-                     {link}
-                   </li>
-                 ))}
-               </ul>
-             </div>
-           ))}
-        </div>
-      </div>
-    );
-  };
-
-  // 3. Documents View (Autoscan UI)
-  const DocumentsView = () => {
-    return (
-      <div className="flex h-full bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        {/* Sidebar */}
-        <div className="w-64 border-r border-gray-200 p-4 bg-gray-50">
-          <div className="flex items-center gap-2 mb-6 text-gray-700 font-bold">
-            <FileText className="w-5 h-5" /> Documents
-          </div>
-          <button className="w-full bg-purple-600 text-white py-2 rounded-lg text-sm font-medium mb-4 hover:bg-purple-700">
-            + Upload File
-          </button>
-          <div className="space-y-1">
-            <div className="px-3 py-2 bg-purple-50 text-purple-700 rounded-lg text-sm font-medium cursor-pointer">Inbox</div>
-            <div className="px-3 py-2 text-gray-600 hover:bg-gray-100 rounded-lg text-sm cursor-pointer">All Documents</div>
-            <div className="px-3 py-2 text-gray-600 hover:bg-gray-100 rounded-lg text-sm cursor-pointer">Trash</div>
-          </div>
-          <div className="mt-8 text-xs font-semibold text-gray-400 uppercase">Folders</div>
-          <div className="mt-2 text-sm text-gray-500 px-3">There are no folders.</div>
-          <button className="text-purple-600 text-sm px-3 mt-2 hover:underline">Create New Folder</button>
-        </div>
-
-        {/* Content */}
-        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-          <div className="mb-6 p-6 bg-gray-50 rounded-full border-2 border-dashed border-gray-300">
-             <Scan className="w-16 h-16 text-gray-400" />
-          </div>
-          <h3 className="text-xl font-bold text-gray-900 mb-2">Introducing Document Autoscan</h3>
-          <p className="text-gray-500 max-w-md mb-6">
-            Automatically capture data from your receipts and convert them into transactions in Inara Inventory.
-          </p>
-          <div className="bg-amber-50 border border-amber-100 p-4 rounded-lg max-w-lg text-left text-sm text-amber-800 mb-6">
-            To continue using Inboxes, you need to accept the new Terms and Conditions. All the files that you've uploaded will still be available.
-          </div>
-          <button className="px-6 py-2 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 transition-colors">
-            Enable Autoscan
-          </button>
-        </div>
-      </div>
-    );
-  };
-
-  // 4. Items View (Was Inventory Product List)
-  const ItemsView = () => {
-    const [newItem, setNewItem] = useState({ name: '', sku: '', qty: '', price: '', location: '' });
-
-    const handleAddItem = () => {
-      if (!newItem.name || !newItem.price) return;
-      const product: Product = {
-        id: Date.now().toString(),
-        name: newItem.name,
-        sku: newItem.sku || `SKU${Date.now()}`,
-        stock: Number(newItem.qty) || 0,
-        price: Number(newItem.price),
-        location: newItem.location || 'Warehouse',
-        category: 'General'
-      };
-      setProducts([product, ...products]);
-      setNewItem({ name: '', sku: '', qty: '', price: '', location: '' });
-    };
-
-    return (
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200">
-        <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-orange-50/30">
-          <h2 className="text-orange-800 font-bold text-lg flex items-center gap-2">
-            <Package className="w-5 h-5" /> Items
-          </h2>
-          <div className="flex gap-2">
-            <button className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm hover:bg-gray-50 shadow-sm">
-              <Download className="w-4 h-4" /> Import
-            </button>
-            <button className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg text-sm hover:bg-orange-700 shadow-sm">
-              <Plus className="w-4 h-4" /> New Item
-            </button>
-          </div>
-        </div>
-
-        {/* Search */}
-        <div className="p-4 border-b border-gray-200 bg-gray-50/50">
-           <div className="relative max-w-lg">
-             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-             <input type="text" placeholder="Search items..." className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:ring-1 focus:ring-orange-500 outline-none" />
-           </div>
-        </div>
-
-        {/* Table */}
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-gray-50 text-gray-600 font-semibold border-b border-gray-200">
-              <tr>
-                <th className="px-6 py-3">Name</th>
-                <th className="px-6 py-3">SKU</th>
-                <th className="px-6 py-3">Location</th>
-                <th className="px-6 py-3">Stock</th>
-                <th className="px-6 py-3">Rate</th>
-                <th className="px-6 py-3 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {products.map(product => (
-                <tr key={product.id} className="hover:bg-gray-50 transition-colors cursor-pointer group">
-                  <td className="px-6 py-3 font-medium text-gray-900 group-hover:text-orange-600">{product.name}</td>
-                  <td className="px-6 py-3 text-gray-500">{product.sku}</td>
-                  <td className="px-6 py-3">
-                    <span className="px-2 py-1 bg-gray-100 rounded text-xs text-gray-600 border border-gray-200">{product.location}</span>
-                  </td>
-                  <td className="px-6 py-3">
-                    <span className={`font-medium ${product.stock < 5 ? 'text-red-600' : 'text-emerald-600'}`}>
-                       {product.stock} Units
-                    </span>
-                  </td>
-                  <td className="px-6 py-3">₹{product.price}</td>
-                  <td className="px-6 py-3 text-right">
-                    <button className="text-gray-400 hover:text-red-500 transition-colors"><Trash2 className="w-4 h-4" /></button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
-  };
-
-  // 5. Sales Order View
-  const SalesOrderView = () => (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-200">
-        <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-emerald-50/30">
-          <h2 className="text-emerald-800 font-bold text-lg flex items-center gap-2">
-            <ShoppingCart className="w-5 h-5" /> Sales Orders
-          </h2>
-          <button className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-700 shadow-sm">
-             + New Order
-          </button>
-        </div>
-        <div className="flex flex-col items-center justify-center p-12 text-gray-500">
-           <ShoppingCart className="w-16 h-16 mb-4 text-gray-300" />
-           <p className="text-lg font-medium">No Sales Orders Yet</p>
-           <p className="text-sm">Create a new sales order to get started.</p>
-        </div>
-    </div>
-  );
-
-  // 6. Purchases View
-  const PurchasesView = () => (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-200">
-        <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-red-50/30">
-          <h2 className="text-red-800 font-bold text-lg flex items-center gap-2">
-            <Truck className="w-5 h-5" /> Purchase Orders
-          </h2>
-          <button className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700 shadow-sm">
-             + New Purchase Order
-          </button>
-        </div>
-        <div className="flex flex-col items-center justify-center p-12 text-gray-500">
-           <Truck className="w-16 h-16 mb-4 text-gray-300" />
-           <p className="text-lg font-medium">No Purchase Orders</p>
-           <p className="text-sm">Manage your vendor orders here.</p>
-        </div>
-    </div>
-  );
-
-  // 7. Expenses View (Reused)
-  const ExpensesView = () => {
-    const [newExpense, setNewExpense] = useState({ desc: '', amt: '', cat: 'Rent', assign: '' });
-    const handleAddExpense = () => {
-      if(!newExpense.desc || !newExpense.amt) return;
-      const expense: Expense = {
-        id: Date.now().toString(),
-        date: new Date().toISOString().split('T')[0],
-        description: newExpense.desc,
-        amount: Number(newExpense.amt),
-        category: newExpense.cat,
-        assignedTo: newExpense.assign || 'Indie-Loom'
-      };
-      setExpenses([expense, ...expenses]);
-      setNewExpense({ desc: '', amt: '', cat: 'Rent', assign: '' });
-    };
-
-    return (
-      <div className="space-y-6">
-        <h2 className="text-red-600 font-bold text-lg flex items-center gap-2">
-            <DollarSign className="w-5 h-5" /> Expenses
-        </h2>
-        
-        {/* Form */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-             <div>
-               <label className="text-xs font-semibold text-gray-500 mb-1 block">Description</label>
-               <input 
-                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-500" 
-                 value={newExpense.desc}
-                 onChange={e => setNewExpense({...newExpense, desc: e.target.value})}
-               />
-             </div>
-             <div>
-               <label className="text-xs font-semibold text-gray-500 mb-1 block">Amount</label>
-               <input 
-                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-500" 
-                 type="number"
-                 value={newExpense.amt}
-                 onChange={e => setNewExpense({...newExpense, amt: e.target.value})}
-               />
-             </div>
-             <div>
-               <label className="text-xs font-semibold text-gray-500 mb-1 block">Category</label>
-               <select 
-                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-500 bg-white"
-                 value={newExpense.cat}
-                 onChange={e => setNewExpense({...newExpense, cat: e.target.value})}
-               >
-                 <option>Rent</option>
-                 <option>Utilities</option>
-                 <option>Salary</option>
-                 <option>Inventory</option>
-               </select>
-             </div>
-             <div>
-                <label className="text-xs font-semibold text-gray-500 mb-1 block">Assign to</label>
-                <select 
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-500 bg-white"
-                  value={newExpense.assign}
-                  onChange={e => setNewExpense({...newExpense, assign: e.target.value})}
-                >
-                  <option value="">-- Select Entity --</option>
-                  <option value="Indie-Loom">Indie-Loom</option>
-                </select>
-             </div>
-           </div>
-           <button 
-             onClick={handleAddExpense}
-             className="w-full py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 shadow-sm"
-           >
-             Save Expense
-           </button>
-        </div>
-
-        {/* Table */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-gray-50 text-gray-600 font-semibold border-b border-gray-200">
-              <tr>
-                <th className="px-6 py-3">Date</th>
-                <th className="px-6 py-3">Desc</th>
-                <th className="px-6 py-3">Assigned</th>
-                <th className="px-6 py-3 text-right">Amt</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {expenses.map(exp => (
-                <tr key={exp.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-3 text-gray-500">{exp.date}</td>
-                  <td className="px-6 py-3">
-                    {exp.description} <span className="text-xs bg-red-50 text-red-600 px-2 py-0.5 rounded ml-2 border border-red-100">{exp.category}</span>
-                  </td>
-                  <td className="px-6 py-3 text-gray-500">{exp.assignedTo}</td>
-                  <td className="px-6 py-3 text-right font-semibold text-gray-900">₹{exp.amount}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
-  };
-
-  // 8. Dashboard View (Reused)
   const DashboardView = () => (
     <div className="space-y-6">
-      <div className="flex justify-between items-end">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-          <p className="text-sm text-gray-500 mt-1">Business Overview</p>
-        </div>
-        <div className="flex bg-white rounded-lg border border-gray-200 p-1 text-xs">
-          {['Week', 'Month', 'Quarter', 'Year'].map(p => (
-            <button key={p} className={`px-3 py-1 rounded ${p === 'Month' ? 'bg-purple-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
-              {p}
-            </button>
-          ))}
-        </div>
-      </div>
+      <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Dashboard</h1>
+      
+      {/* Low Stock Alert */}
+      {lowStockCount > 0 && (
+         <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-4 rounded-xl flex items-center gap-3 text-red-700 dark:text-red-300 animate-pulse">
+            <AlertCircle className="w-5 h-5" />
+            <span className="font-medium">Warning: {lowStockCount} items are low on stock! Check Inventory.</span>
+         </div>
+      )}
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {[
-          { label: 'Total Revenue', val: `₹${totalRevenue.toLocaleString()}`, sub: 'Gross Sales', icon: DollarSign, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-          { label: 'Low Stock Items', val: lowStockCount, sub: 'Needs Reorder', icon: Package, color: 'text-orange-600', bg: 'bg-orange-50' },
-          { label: 'Net Profit', val: `₹${netProfit.toLocaleString()}`, sub: 'Estimated', icon: TrendingUp, color: 'text-purple-600', bg: 'bg-purple-50' },
-          { label: 'Total Expenses', val: `₹${totalExpenses.toLocaleString()}`, sub: 'This Month', icon: Activity, color: 'text-red-600', bg: 'bg-red-50' },
+          { label: 'Total Revenue', val: `₹${totalRevenue.toLocaleString()}`, icon: DollarSign, color: 'text-emerald-500', bg: 'bg-emerald-50 dark:bg-emerald-900/20' },
+          { label: 'Total Products', val: products.length, icon: Package, color: 'text-blue-500', bg: 'bg-blue-50 dark:bg-blue-900/20' },
+          { label: 'Total Sales', val: sales.length, icon: TrendingUp, color: 'text-purple-500', bg: 'bg-purple-50 dark:bg-purple-900/20' },
         ].map((stat, idx) => (
-          <div key={idx} className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
+          <div key={idx} className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-slate-100 dark:border-slate-700 shadow-sm">
              <div className="flex justify-between items-start mb-4">
-               <div className={`p-2 rounded-lg ${stat.bg} ${stat.color}`}>
-                 <stat.icon className="w-6 h-6" />
-               </div>
+               <div className={`p-2 rounded-lg ${stat.bg} ${stat.color}`}><stat.icon className="w-6 h-6" /></div>
              </div>
-             <h3 className="text-gray-500 text-sm font-medium">{stat.label}</h3>
-             <p className="text-2xl font-bold text-gray-900 mt-1">{stat.val}</p>
-             <p className="text-xs text-gray-400 mt-1">{stat.sub}</p>
+             <p className="text-slate-500 text-sm font-medium">{stat.label}</p>
+             <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{stat.val}</p>
           </div>
         ))}
       </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
-          <h3 className="text-lg font-semibold text-gray-900 mb-6 flex items-center gap-2">
-            <PieChart className="w-5 h-5 text-purple-600" /> Sales Channels
-          </h3>
-          <div className="space-y-6">
-            <div>
-              <div className="flex justify-between text-sm mb-2">
-                <span className="font-medium text-gray-700">Store Walk-in</span>
-                <span className="font-bold text-gray-900">₹{totalRevenue.toLocaleString()}</span>
-              </div>
-              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                <div className="h-full bg-purple-600 w-full" />
-              </div>
-            </div>
-            {['Instagram Shop', 'Facebook Marketplace', 'Website'].map(channel => (
-              <div key={channel}>
-                <div className="flex justify-between text-sm mb-2">
-                  <span className="font-medium text-gray-500">{channel}</span>
-                  <span className="font-bold text-gray-500">₹0</span>
-                </div>
-                <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                  <div className="h-full bg-gray-300 w-0" />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
-          <h3 className="text-lg font-semibold text-gray-900 mb-6">Recent Activity</h3>
-          <div className="space-y-4">
-            {sales.slice(0, 5).map((sale, i) => (
-              <div key={i} className="flex items-center justify-between group cursor-pointer hover:bg-gray-50 p-2 rounded-lg transition-colors">
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-full bg-purple-50 text-purple-600 flex items-center justify-center">
-                    <CheckIcon />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-gray-900">{sale.customer}</p>
-                    <p className="text-xs text-gray-500">{sale.date} • via {sale.channel}</p>
-                  </div>
-                </div>
-                <span className="font-semibold text-emerald-600">+₹{sale.amount}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
     </div>
   );
 
-  // 9. Billing / POS View (Reused)
-  const BillingView = () => {
-    const [searchTerm, setSearchTerm] = useState('');
-    const [customerName, setCustomerName] = useState('');
-    const addToCart = (product: Product) => {
-      setCart(prev => {
-        const existing = prev.find(item => item.id === product.id);
-        if (existing) {
-          return prev.map(item => item.id === product.id ? { ...item, qty: item.qty + 1 } : item);
-        }
-        return [...prev, { ...product, qty: 1 }];
-      });
-    };
-    const cartTotal = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
-    const handleCompleteSale = () => {
-      if (cart.length === 0) return;
-      const newSale: Sale = {
-        id: Date.now().toString(),
-        date: new Date().toISOString().split('T')[0],
-        customer: customerName || 'Walk-in',
-        amount: cartTotal,
-        items: [...cart],
-        channel: 'Store'
-      };
-      setSales([newSale, ...sales]);
-      setCart([]);
-      setCustomerName('');
-      alert('Sale Completed!');
-    };
-    const filteredProducts = products.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()));
-
-    return (
-      <div className="flex h-[calc(100vh-100px)] gap-6">
-        <div className="flex-1 flex flex-col">
-          <div className="flex justify-between items-center mb-6">
-             <div className="relative w-full max-w-md">
-               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-               <input 
-                 type="text" 
-                 placeholder="Search products..." 
-                 className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all"
-                 value={searchTerm}
-                 onChange={e => setSearchTerm(e.target.value)}
-               />
-             </div>
-          </div>
-          <div className="grid grid-cols-3 gap-4 overflow-y-auto pr-2 pb-20">
-            {filteredProducts.map(product => (
-              <div key={product.id} onClick={() => addToCart(product)} className="bg-white p-4 rounded-xl border border-gray-200 hover:border-emerald-500 hover:shadow-md cursor-pointer transition-all group">
-                <h3 className="font-medium text-gray-900 line-clamp-1 group-hover:text-emerald-700">{product.name}</h3>
-                <div className="flex justify-between items-end mt-4">
-                  <div>
-                    <p className="text-lg font-bold text-gray-900">₹{product.price}</p>
-                    <p className={`text-xs ${product.stock <= 0 ? 'text-red-500' : 'text-gray-500'}`}>Stock: {product.stock}</p>
-                  </div>
-                  <div className="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center group-hover:bg-emerald-50 group-hover:text-emerald-600 transition-colors"><Plus className="w-4 h-4" /></div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div className="w-80 bg-white border border-gray-200 flex flex-col h-full rounded-xl shadow-lg overflow-hidden">
-          <div className="p-4 border-b border-gray-200 bg-emerald-50/50">
-            <h2 className="font-semibold text-emerald-800 flex items-center gap-2"><ShoppingCart className="w-4 h-4" /> Current Order</h2>
-          </div>
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            {cart.length === 0 ? <div className="flex flex-col items-center justify-center h-full text-gray-400 text-sm gap-2"><ShoppingCart className="w-8 h-8 opacity-20" /><span>Cart is empty</span></div> : cart.map((item, idx) => (
-                <div key={idx} className="flex justify-between items-start text-sm pb-3 border-b border-gray-50 last:border-0">
-                  <div><p className="font-medium text-gray-800">{item.name}</p><p className="text-gray-500 text-xs">{item.qty} x ₹{item.price}</p></div>
-                  <p className="font-semibold text-gray-900">₹{item.price * item.qty}</p>
-                </div>
-            ))}
-          </div>
-          <div className="p-4 border-t border-gray-200 bg-gray-50 space-y-4">
-            <div className="flex justify-between items-center text-lg font-bold text-gray-900"><span>Total</span><span>₹{cartTotal}</span></div>
-            <input type="text" placeholder="Customer Name (Optional)" className="w-full px-4 py-2 border border-gray-200 rounded-lg text-sm bg-white" value={customerName} onChange={e => setCustomerName(e.target.value)} />
-            <button onClick={handleCompleteSale} disabled={cart.length === 0} className="w-full py-3 bg-emerald-600 text-white rounded-lg font-medium hover:bg-emerald-700 transition-colors disabled:opacity-50">Complete Sale</button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // Main Render View Logic
   const renderView = () => {
     switch(currentView) {
-      // Top Level
       case 'dashboard': return <DashboardView />;
       case 'settings': return <SetupView />;
-      case 'documents': return <DocumentsView />;
-      
-      // Items
-      case 'items_list': return <ItemsView />;
-      case 'item_groups': return <div className="p-10 text-center text-gray-500">Item Groups Module</div>;
-      
-      // Inventory
-      case 'inv_adjustments': return <div className="p-10 text-center text-gray-500">Inventory Adjustments Module</div>;
-      case 'inv_packages': return <div className="p-10 text-center text-gray-500">Packages Module</div>;
-      
-      // Sales
-      case 'billing': return <BillingView />;
-      case 'sales_orders': return <SalesOrderView />;
-      case 'sales_customers': return <div className="p-10 text-center text-gray-500">Customers Module</div>;
-      
-      // Purchases
-      case 'expenses': return <ExpensesView />;
-      case 'purchases_orders': return <PurchasesView />;
-      case 'purchases_vendors': return <div className="p-10 text-center text-gray-500">Vendors Module</div>;
-      
-      default: return <AppLauncher onSelectApp={(app) => setCurrentView(app === 'home' ? 'dashboard' : app)} />;
+      case 'items_list': return <ItemsView products={products} />;
+      case 'billing': return <BillingView products={products} />;
+      case 'sales_orders': return <SalesOrdersView />;
+      case 'documents': return <div className="p-10 text-center dark:text-white">Document Management System</div>;
+      default: return <DashboardView />;
     }
   };
 
-  // AI Context
-  const getContextData = () => {
-    return {
-      currentView,
-      totalRevenue,
-      totalExpenses,
-      recentSales: sales.slice(0, 5),
-      inventorySummary: { count: products.length, lowStock: lowStockCount }
-    };
-  };
-
-  if (currentView === 'home') {
-    return <AppLauncher onSelectApp={(app) => setCurrentView(app === 'dashboard' ? 'dashboard' : app)} />;
-  }
-
   return (
-    <div className="flex h-screen bg-[#f8fafc]">
+    <div className="flex h-screen bg-slate-50 dark:bg-slate-900 transition-colors duration-200">
       <Sidebar />
       <main className="flex-1 flex flex-col h-screen overflow-hidden">
-        {/* Top Header */}
-        <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6 shadow-sm z-10 shrink-0">
+        <header className="h-16 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between px-6 shadow-sm z-10 shrink-0 no-print">
           <div className="flex items-center gap-4">
-            <button onClick={() => setSidebarOpen(!sidebarOpen)} className="text-gray-500 hover:text-gray-700">
-              <Menu className="w-5 h-5" />
-            </button>
-            <div className="flex items-center gap-4">
-               {/* Organization Dropdown */}
-               <div className="relative group cursor-pointer">
-                  <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors">
-                     <div className="w-6 h-6 bg-purple-600 rounded flex items-center justify-center text-white text-xs font-bold">
-                        {currentOrg.substring(0, 2)}
-                     </div>
-                     <span className="text-sm font-semibold text-gray-900">{currentOrg}</span>
-                     <ChevronDown className="w-3 h-3 text-gray-500" />
-                  </div>
-                  {/* Dropdown Menu (Mock) */}
-                  <div className="absolute top-full left-0 mt-2 w-56 bg-white rounded-lg shadow-xl border border-gray-100 hidden group-hover:block p-2 z-50">
-                     <div className="text-xs font-semibold text-gray-400 px-2 py-1">MY ORGANIZATIONS</div>
-                     <div className="flex items-center gap-2 px-2 py-2 bg-purple-50 rounded text-purple-700 cursor-pointer">
-                        <Store className="w-4 h-4" />
-                        <span className="text-sm font-medium">INARA</span>
-                     </div>
-                     <div className="flex items-center gap-2 px-2 py-2 hover:bg-gray-50 rounded text-gray-600 cursor-pointer mt-1">
-                        <Plus className="w-4 h-4" />
-                        <span className="text-sm">New Organization</span>
-                     </div>
-                  </div>
-               </div>
-            </div>
+             <button onClick={() => setSidebarOpen(!sidebarOpen)}><Menu className="w-5 h-5 text-slate-500" /></button>
           </div>
-          
-          <div className="flex items-center gap-6">
-            <div className="relative">
-               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-               <input 
-                 type="text" 
-                 placeholder="Search in INARA..." 
-                 className="pl-9 pr-4 py-1.5 bg-gray-100 border-transparent focus:bg-white focus:border-purple-500 focus:ring-0 rounded-full text-sm w-64 transition-all"
-               />
-            </div>
-            <button className="relative text-gray-500 hover:text-purple-600">
-              <Bell className="w-5 h-5" />
-              <span className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full border-2 border-white"></span>
-            </button>
-            <button className="text-gray-500 hover:text-purple-600">
-               <Settings className="w-5 h-5" onClick={() => setCurrentView('settings')} />
-            </button>
-            <div className="flex items-center gap-2 cursor-pointer">
-              <div className="w-8 h-8 bg-purple-100 rounded-full flex items-center justify-center text-purple-600 font-bold text-xs">JD</div>
-            </div>
+          <div className="flex items-center gap-4">
+             <button onClick={toggleTheme} className="text-slate-500 hover:text-purple-600">
+                {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+             </button>
+             <div className="w-8 h-8 bg-purple-100 dark:bg-purple-900 rounded-full flex items-center justify-center text-purple-700 dark:text-purple-200 font-bold text-xs">
+                {user?.name?.substring(0,2).toUpperCase()}
+             </div>
           </div>
         </header>
 
-        {/* Content Area */}
         <div className="flex-1 overflow-y-auto p-6 relative">
           <div className="max-w-7xl mx-auto min-h-full pb-20">
-            {renderView()}
+            {pLoading || sLoading ? (
+               <div className="flex justify-center pt-20"><Loader2 className="w-10 h-10 animate-spin text-purple-600" /></div>
+            ) : renderView()}
           </div>
         </div>
-
-        <AIAssistant contextData={getContextData()} />
       </main>
     </div>
   );
 };
 
-// --- REUSED COMPONENTS ---
+// --- APP ROOT ---
 
-const AppLauncher = ({ onSelectApp }: { onSelectApp: (app: string) => void }) => {
-  const apps = [
-    { id: 'dashboard', name: 'Dashboard', icon: BarChart3, color: 'bg-purple-600' },
-    { id: 'billing', name: 'Sales & POS', icon: ShoppingCart, color: 'bg-emerald-600' },
-    { id: 'items_list', name: 'Items', icon: Package, color: 'bg-orange-600' },
-    { id: 'expenses', name: 'Expenses', icon: DollarSign, color: 'bg-red-600' },
-    { id: 'reports', name: 'Reports', icon: Sparkles, color: 'bg-blue-600' },
-    { id: 'documents', name: 'Documents', icon: FileText, color: 'bg-gray-600' },
-    { id: 'settings', name: 'Setup', icon: Settings, color: 'bg-slate-700' },
-  ];
-
+const App = () => {
   return (
-    <div className="min-h-screen bg-[url('https://images.unsplash.com/photo-1497215728101-856f4ea42174?q=80&w=2070&auto=format&fit=crop')] bg-cover bg-center">
-      <div className="min-h-screen bg-black/40 backdrop-blur-sm flex flex-col items-center justify-center p-8">
-        <div className="mb-12 text-center">
-          <h1 className="text-4xl font-bold text-white mb-2 tracking-tight">INARA DESIGNS</h1>
-          <p className="text-white/80">Enterprise Resource Planning</p>
-        </div>
-        
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 max-w-5xl w-full">
-          {apps.map((app) => (
-            <button
-              key={app.id}
-              onClick={() => onSelectApp(app.id)}
-              className="group flex flex-col items-center justify-center p-6 bg-white/10 hover:bg-white/20 border border-white/10 rounded-xl transition-all duration-200 backdrop-blur-md"
-            >
-              <div className={`p-4 rounded-lg ${app.color} shadow-lg mb-4 group-hover:scale-110 transition-transform`}>
-                <app.icon className="w-8 h-8 text-white" />
-              </div>
-              <span className="text-white font-medium text-lg">{app.name}</span>
-            </button>
-          ))}
-        </div>
-        
-        <div className="mt-16 text-white/60 text-sm">
-          Powered by Gemini 3.0 • v17.0.0
-        </div>
-      </div>
-    </div>
+    <ThemeProvider>
+      <AuthProvider>
+        <AuthWrapper />
+      </AuthProvider>
+    </ThemeProvider>
   );
 };
 
-const AIAssistant = ({ contextData }: { contextData: any }) => {
-  const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState<{role: 'user' | 'model', text: string}[]>([
-    { role: 'model', text: 'Hello! I am Inara AI. How can I help you analyze your data today?' }
-  ]);
-  const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [messages, isOpen]);
-
-  const handleSend = async () => {
-    if (!input.trim() || isLoading) return;
-    const userMsg = input;
-    setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
-    setInput('');
-    setIsLoading(true);
-
-    try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const prompt = `
-        You are an intelligent ERP assistant for "Inara Designs" (Satika ERP).
-        Current Context Data: ${JSON.stringify(contextData)}
-        User Query: ${userMsg}
-        Provide a concise, professional business insight.
-      `;
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: prompt,
-      });
-      setMessages(prev => [...prev, { role: 'model', text: response.text || "No response generated." }]);
-    } catch (error) {
-      setMessages(prev => [...prev, { role: 'model', text: "Connection error." }]);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  return (
-    <>
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="fixed bottom-6 right-6 z-50 p-4 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-full shadow-2xl hover:scale-105 transition-transform flex items-center gap-2"
-      >
-        <Sparkles className="w-6 h-6" />
-        {isOpen ? 'Close AI' : 'Ask AI'}
-      </button>
-
-      {isOpen && (
-        <div className="fixed bottom-24 right-6 z-50 w-96 h-[500px] bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col overflow-hidden animate-in slide-in-from-bottom-10 fade-in duration-300">
-          <div className="p-4 bg-gradient-to-r from-purple-600 to-indigo-600 text-white flex justify-between items-center">
-            <h3 className="font-semibold flex items-center gap-2">
-              <Sparkles className="w-4 h-4" /> Inara AI Assistant
-            </h3>
-            <button onClick={() => setIsOpen(false)}><X className="w-5 h-5 opacity-80 hover:opacity-100" /></button>
-          </div>
-          
-          <div className="flex-1 overflow-y-auto p-4 bg-gray-50 space-y-4" ref={scrollRef}>
-            {messages.map((m, i) => (
-              <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[85%] p-3 rounded-2xl text-sm ${
-                  m.role === 'user' 
-                    ? 'bg-purple-600 text-white rounded-br-none' 
-                    : 'bg-white border border-gray-200 text-gray-800 rounded-bl-none shadow-sm'
-                }`}>
-                  {m.text}
-                </div>
-              </div>
-            ))}
-            {isLoading && (
-              <div className="flex justify-start">
-                <div className="bg-white border border-gray-200 p-3 rounded-2xl rounded-bl-none shadow-sm flex items-center gap-2">
-                  <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                  <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                  <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="p-4 bg-white border-t border-gray-100">
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-                placeholder="Ask about sales, leads..."
-                className="flex-1 px-4 py-2 border border-gray-200 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm"
-              />
-              <button 
-                onClick={handleSend}
-                disabled={isLoading}
-                className="p-2 bg-purple-600 text-white rounded-full hover:bg-purple-700 disabled:opacity-50"
-              >
-                <Send className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </>
-  );
+const AuthWrapper = () => {
+  const { user, loading } = useContext(AuthContext);
+  if (loading) return <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900"><Loader2 className="w-10 h-10 text-purple-600 animate-spin" /></div>;
+  if (!user) return <LoginScreen />;
+  return <AppContent />;
 };
-
-// Check Icon Helper
-const CheckIcon = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-);
 
 const root = createRoot(document.getElementById('root')!);
 root.render(<App />);
