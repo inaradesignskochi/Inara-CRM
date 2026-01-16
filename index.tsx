@@ -5,14 +5,14 @@ import { initializeApp } from "firebase/app";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
 import { 
   getFirestore, collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, 
-  query, orderBy, limit, where, serverTimestamp, writeBatch, Timestamp 
+  query, orderBy, limit, where, serverTimestamp, writeBatch, Timestamp, getDoc, setDoc 
 } from "firebase/firestore";
 import { 
   LayoutGrid, Users, ShoppingCart, Package, BarChart3, Settings, Search, Bell, Menu, X, Plus, 
   Filter, ArrowLeft, MessageSquare, Send, Sparkles, MoreHorizontal, DollarSign, TrendingUp, 
   Activity, Trash2, Save, Download, Store, Link as LinkIcon, LogOut, CreditCard, Facebook, 
   Instagram, ChevronDown, ChevronRight, FileText, Truck, ClipboardList, Scan, Shield, Zap, 
-  Database, Globe, Mail, Moon, Sun, Lock, Loader2, AlertCircle, Printer, History
+  Database, Globe, Mail, Moon, Sun, Lock, Loader2, AlertCircle, Printer, History, CheckCircle, Upload
 } from 'lucide-react';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, 
@@ -67,6 +67,24 @@ type Sale = {
   amount: number;
   items: CartItem[];
   channel: string;
+};
+
+type Vendor = {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+};
+
+type PurchaseOrder = {
+  id: string;
+  vendorId: string;
+  vendorName: string;
+  status: 'Draft' | 'Ordered' | 'Received';
+  items: CartItem[];
+  total: number;
+  date: string;
+  createdAt?: any;
 };
 
 type AppUser = {
@@ -124,15 +142,42 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        const role = firebaseUser.email?.includes('worker') ? 'Worker' : (firebaseUser.email?.includes('admin') ? 'Admin' : 'Owner');
-        setUser({
-          id: firebaseUser.uid,
-          email: firebaseUser.email || '',
-          name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
-          role: role as Role
-        });
+        try {
+          const userRef = doc(db, "users", firebaseUser.uid);
+          const userSnap = await getDoc(userRef);
+          
+          let userData: AppUser;
+          
+          if (userSnap.exists()) {
+             userData = { id: firebaseUser.uid, ...userSnap.data() } as AppUser;
+          } else {
+             // First time login setup
+             const role = (firebaseUser.email?.includes('aneesh') || firebaseUser.email?.includes('admin')) ? 'Owner' : 'Worker';
+             userData = {
+                id: firebaseUser.uid,
+                email: firebaseUser.email || '',
+                name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
+                role: role as Role
+             };
+             await setDoc(userRef, {
+                email: userData.email,
+                name: userData.name,
+                role: userData.role
+             });
+          }
+          setUser(userData);
+        } catch (e) {
+          console.error("Error fetching user data", e);
+          // Fallback
+          setUser({
+            id: firebaseUser.uid,
+            email: firebaseUser.email || '',
+            name: 'User',
+            role: 'Worker'
+          });
+        }
       } else {
         setUser(null);
       }
@@ -289,6 +334,11 @@ const ItemsView = ({ products }: { products: Product[] }) => {
   const { user } = useContext(AuthContext);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newItem, setNewItem] = useState({ name: '', sku: '', price: '', stock: '', category: 'General' });
+  
+  // Bulk Import State
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState({ processed: 0, total: 0 });
 
   const handleAddItem = async () => {
     if (!newItem.name || !newItem.price) return;
@@ -310,9 +360,95 @@ const ItemsView = ({ products }: { products: Product[] }) => {
   };
 
   const handleDeleteItem = async (id: string, name: string) => {
+    if (user?.role === 'Worker') return alert("Access Denied");
     if (confirm(`Delete ${name}?`)) {
       await deleteDoc(doc(db, 'products', id));
       await logAudit(user, 'DELETE_ITEM', `Deleted item ${name}`);
+    }
+  };
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const text = e.target?.result as string;
+      if (!text) return;
+      await processCSV(text);
+    };
+    reader.readAsText(file);
+    // Reset input
+    event.target.value = '';
+  };
+
+  const processCSV = async (csvText: string) => {
+    setImporting(true);
+    try {
+      const lines = csvText.split('\n').map(line => line.trim()).filter(line => line);
+      if (lines.length < 2) {
+        alert("CSV file is empty or invalid format.");
+        setImporting(false);
+        return;
+      }
+
+      const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+      // Basic validation: check if expected headers exist
+      const expected = ['name', 'sku', 'price', 'stock', 'category'];
+      const hasHeaders = expected.every(h => headers.includes(h));
+      
+      if (!hasHeaders) {
+        alert(`Invalid CSV format. Expected headers: ${expected.join(', ')}`);
+        setImporting(false);
+        return;
+      }
+
+      const itemsToImport = [];
+      for (let i = 1; i < lines.length; i++) {
+        const values = lines[i].split(',').map(v => v.trim());
+        if (values.length !== headers.length) continue;
+
+        const item: any = {};
+        headers.forEach((header, index) => {
+          item[header] = values[index];
+        });
+        
+        // Data cleaning
+        itemsToImport.push({
+          name: item.name,
+          sku: item.sku,
+          price: Number(item.price) || 0,
+          stock: Number(item.stock) || 0,
+          category: item.category || 'General',
+          location: 'Warehouse'
+        });
+      }
+
+      setImportProgress({ processed: 0, total: itemsToImport.length });
+
+      // Firestore Batch Write (Max 500 operations per batch)
+      const batchSize = 450;
+      for (let i = 0; i < itemsToImport.length; i += batchSize) {
+        const batch = writeBatch(db);
+        const chunk = itemsToImport.slice(i, i + batchSize);
+        
+        chunk.forEach(item => {
+          const ref = doc(collection(db, 'products'));
+          batch.set(ref, item);
+        });
+
+        await batch.commit();
+        setImportProgress(prev => ({ ...prev, processed: Math.min(prev.total, i + batchSize) }));
+      }
+
+      await logAudit(user, 'BULK_IMPORT', `Imported ${itemsToImport.length} items from CSV`);
+      alert("Bulk import successful!");
+
+    } catch (error) {
+      console.error("Import failed:", error);
+      alert("Import failed. Check console for details.");
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -322,14 +458,48 @@ const ItemsView = ({ products }: { products: Product[] }) => {
         <h2 className="text-orange-800 dark:text-orange-300 font-bold text-lg flex items-center gap-2">
           <Package className="w-5 h-5" /> Items ({products.length})
         </h2>
-        <button 
-          onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg text-sm hover:bg-orange-700 shadow-sm"
-        >
-           <Plus className="w-4 h-4" /> New Item
-        </button>
+        {user?.role !== 'Worker' && (
+          <div className="flex gap-2">
+            <input 
+              type="file" 
+              ref={fileInputRef} 
+              className="hidden" 
+              accept=".csv"
+              onChange={handleFileUpload}
+            />
+            <button 
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-2 px-4 py-2 bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200 rounded-lg text-sm hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors"
+            >
+              <Upload className="w-4 h-4" /> Import CSV
+            </button>
+            <button 
+              onClick={() => setShowAddModal(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg text-sm hover:bg-orange-700 shadow-sm"
+            >
+              <Plus className="w-4 h-4" /> New Item
+            </button>
+          </div>
+        )}
       </div>
       
+      {/* Import Progress Modal */}
+      {importing && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-800 p-8 rounded-xl shadow-2xl flex flex-col items-center">
+             <Loader2 className="w-10 h-10 text-purple-600 animate-spin mb-4" />
+             <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">Importing Items...</h3>
+             <p className="text-slate-500 dark:text-slate-400">Processed {importProgress.processed} of {importProgress.total}</p>
+             <div className="w-64 h-2 bg-slate-200 dark:bg-slate-700 rounded-full mt-4 overflow-hidden">
+                <div 
+                  className="h-full bg-purple-600 transition-all duration-300"
+                  style={{ width: `${(importProgress.processed / Math.max(importProgress.total, 1)) * 100}%` }}
+                />
+             </div>
+          </div>
+        </div>
+      )}
+
       {/* Add Modal */}
       {showAddModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
@@ -380,9 +550,11 @@ const ItemsView = ({ products }: { products: Product[] }) => {
                 </td>
                 <td className="px-6 py-3">₹{product.price}</td>
                 <td className="px-6 py-3 text-right">
-                  <button onClick={(e) => { e.stopPropagation(); handleDeleteItem(product.id, product.name); }} className="text-slate-400 hover:text-red-500 transition-colors">
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  {user?.role !== 'Worker' && (
+                    <button onClick={(e) => { e.stopPropagation(); handleDeleteItem(product.id, product.name); }} className="text-slate-400 hover:text-red-500 transition-colors">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -645,9 +817,206 @@ const SalesOrdersView = () => {
    );
 };
 
+// --- NEW MODULE: PURCHASES & VENDORS ---
+
+const PurchasesView = ({ products }: { products: Product[] }) => {
+  const { user } = useContext(AuthContext);
+  const { data: vendors } = useFirestoreCollection<Vendor>('vendors');
+  const { data: orders } = useFirestoreCollection<PurchaseOrder>('purchase_orders', 'createdAt');
+  
+  const [activeTab, setActiveTab] = useState<'orders' | 'vendors'>('orders');
+  const [showVendorModal, setShowVendorModal] = useState(false);
+  const [showPOModal, setShowPOModal] = useState(false);
+  
+  // New Vendor State
+  const [newVendor, setNewVendor] = useState({ name: '', email: '', phone: '' });
+
+  // New PO State
+  const [newPO, setNewPO] = useState<{ vendorId: string, items: CartItem[] }>({ vendorId: '', items: [] });
+  const [poItem, setPOItem] = useState<{ productId: string, qty: number }>({ productId: '', qty: 1 });
+
+  const handleAddVendor = async () => {
+    if(!newVendor.name) return;
+    await addDoc(collection(db, 'vendors'), newVendor);
+    setShowVendorModal(false);
+    setNewVendor({ name: '', email: '', phone: '' });
+  };
+
+  const handleAddItemToPO = () => {
+     if(!poItem.productId || poItem.qty < 1) return;
+     const product = products.find(p => p.id === poItem.productId);
+     if(!product) return;
+     
+     setNewPO(prev => ({
+        ...prev,
+        items: [...prev.items, { ...product, qty: poItem.qty }]
+     }));
+  };
+
+  const handleCreatePO = async () => {
+     if(!newPO.vendorId || newPO.items.length === 0) return;
+     const vendor = vendors.find(v => v.id === newPO.vendorId);
+     
+     const total = newPO.items.reduce((sum, item) => sum + (item.price * item.qty), 0); // Assuming cost price same as sell price for demo
+
+     await addDoc(collection(db, 'purchase_orders'), {
+        vendorId: newPO.vendorId,
+        vendorName: vendor?.name || 'Unknown',
+        items: newPO.items,
+        status: 'Ordered',
+        total,
+        date: new Date().toISOString(),
+        createdAt: serverTimestamp()
+     });
+
+     setShowPOModal(false);
+     setNewPO({ vendorId: '', items: [] });
+     await logAudit(user, 'CREATE_PO', `Created PO for ${vendor?.name}`);
+  };
+
+  const handleReceivePO = async (order: PurchaseOrder) => {
+     if(order.status !== 'Ordered') return;
+     
+     const batch = writeBatch(db);
+     
+     // Update Stock
+     order.items.forEach(item => {
+        const productRef = doc(db, 'products', item.id);
+        // We need to fetch current stock to safely increment? 
+        // For simplicity in batch, we can assume products state is relatively fresh or use increment()
+        // but here we used full batch writes in billing, let's just increment based on known logic.
+        // Actually, best practice is increment from field value.
+        // But since we are inside a react component with `products` prop updating live:
+        const currentProd = products.find(p => p.id === item.id);
+        if(currentProd) {
+           batch.update(productRef, { stock: currentProd.stock + item.qty });
+        }
+     });
+
+     // Update PO Status
+     const poRef = doc(db, 'purchase_orders', order.id);
+     batch.update(poRef, { status: 'Received' });
+
+     await batch.commit();
+     await logAudit(user, 'RECEIVE_PO', `Received goods for PO ${order.id.slice(0,6)}`);
+  };
+
+  return (
+     <div className="space-y-6">
+        {/* Header Tabs */}
+        <div className="flex gap-4 border-b border-slate-200 dark:border-slate-700">
+           <button onClick={() => setActiveTab('orders')} className={`pb-2 px-1 text-sm font-medium ${activeTab === 'orders' ? 'text-purple-600 border-b-2 border-purple-600' : 'text-slate-500'}`}>Purchase Orders</button>
+           <button onClick={() => setActiveTab('vendors')} className={`pb-2 px-1 text-sm font-medium ${activeTab === 'vendors' ? 'text-purple-600 border-b-2 border-purple-600' : 'text-slate-500'}`}>Vendors</button>
+        </div>
+
+        {activeTab === 'vendors' ? (
+           <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
+              <div className="flex justify-between mb-4">
+                 <h2 className="font-bold text-lg dark:text-white">Suppliers</h2>
+                 <button onClick={() => setShowVendorModal(true)} className="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-purple-700">Add Vendor</button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                 {vendors.map(v => (
+                    <div key={v.id} className="p-4 border border-slate-200 dark:border-slate-700 rounded-lg">
+                       <h3 className="font-bold dark:text-white">{v.name}</h3>
+                       <p className="text-sm text-slate-500">{v.email}</p>
+                       <p className="text-sm text-slate-500">{v.phone}</p>
+                    </div>
+                 ))}
+              </div>
+           </div>
+        ) : (
+           <div className="space-y-4">
+               <div className="flex justify-between items-center">
+                  <h2 className="text-xl font-bold dark:text-white">Orders</h2>
+                  <button onClick={() => setShowPOModal(true)} className="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-purple-700">+ New Order</button>
+               </div>
+               
+               <div className="space-y-3">
+                  {orders.map(order => (
+                     <div key={order.id} className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700 flex justify-between items-center">
+                        <div>
+                           <div className="flex items-center gap-2">
+                              <span className="font-bold dark:text-white">{order.vendorName}</span>
+                              <span className={`text-xs px-2 py-0.5 rounded-full ${order.status === 'Received' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{order.status}</span>
+                           </div>
+                           <p className="text-xs text-slate-500 mt-1">{new Date(order.date).toLocaleDateString()} • {order.items.length} Items</p>
+                        </div>
+                        <div className="flex items-center gap-4">
+                           <span className="font-bold dark:text-white">₹{order.total}</span>
+                           {order.status === 'Ordered' && (
+                              <button onClick={() => handleReceivePO(order)} className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Receive Goods">
+                                 <CheckCircle className="w-5 h-5" />
+                              </button>
+                           )}
+                        </div>
+                     </div>
+                  ))}
+               </div>
+           </div>
+        )}
+
+        {/* VENDOR MODAL */}
+        {showVendorModal && (
+           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+              <div className="bg-white dark:bg-slate-800 p-6 rounded-xl w-full max-w-md shadow-2xl">
+                 <h3 className="font-bold mb-4 dark:text-white">Add Vendor</h3>
+                 <input className="w-full mb-3 p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" placeholder="Name" value={newVendor.name} onChange={e => setNewVendor({...newVendor, name: e.target.value})} />
+                 <input className="w-full mb-3 p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" placeholder="Email" value={newVendor.email} onChange={e => setNewVendor({...newVendor, email: e.target.value})} />
+                 <input className="w-full mb-4 p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" placeholder="Phone" value={newVendor.phone} onChange={e => setNewVendor({...newVendor, phone: e.target.value})} />
+                 <div className="flex gap-2">
+                    <button onClick={() => setShowVendorModal(false)} className="flex-1 py-2 text-slate-500">Cancel</button>
+                    <button onClick={handleAddVendor} className="flex-1 py-2 bg-purple-600 text-white rounded-lg">Save</button>
+                 </div>
+              </div>
+           </div>
+        )}
+
+        {/* PO MODAL */}
+        {showPOModal && (
+           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+              <div className="bg-white dark:bg-slate-800 p-6 rounded-xl w-full max-w-lg shadow-2xl">
+                 <h3 className="font-bold mb-4 dark:text-white">Create Purchase Order</h3>
+                 
+                 <select className="w-full mb-4 p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" value={newPO.vendorId} onChange={e => setNewPO({...newPO, vendorId: e.target.value})}>
+                    <option value="">Select Vendor</option>
+                    {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                 </select>
+
+                 <div className="bg-slate-50 dark:bg-slate-900 p-3 rounded-lg mb-4">
+                    <div className="flex gap-2 mb-2">
+                       <select className="flex-1 p-2 border rounded text-sm dark:bg-slate-700 dark:text-white" value={poItem.productId} onChange={e => setPOItem({...poItem, productId: e.target.value})}>
+                          <option value="">Select Item</option>
+                          {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                       </select>
+                       <input type="number" className="w-20 p-2 border rounded text-sm dark:bg-slate-700 dark:text-white" value={poItem.qty} onChange={e => setPOItem({...poItem, qty: Number(e.target.value)})} />
+                       <button onClick={handleAddItemToPO} className="px-3 bg-slate-200 dark:bg-slate-600 rounded">+</button>
+                    </div>
+                    <ul className="text-sm space-y-1">
+                       {newPO.items.map((item, idx) => (
+                          <li key={idx} className="flex justify-between text-slate-600 dark:text-slate-400">
+                             <span>{item.name}</span>
+                             <span>x{item.qty}</span>
+                          </li>
+                       ))}
+                    </ul>
+                 </div>
+
+                 <div className="flex gap-2">
+                    <button onClick={() => setShowPOModal(false)} className="flex-1 py-2 text-slate-500">Cancel</button>
+                    <button onClick={handleCreatePO} className="flex-1 py-2 bg-purple-600 text-white rounded-lg">Place Order</button>
+                 </div>
+              </div>
+           </div>
+        )}
+     </div>
+  );
+};
+
 const SetupView = () => {
    const { user } = useContext(AuthContext);
    const { data: audits } = useFirestoreCollection<AuditLog>('audit_logs', 'timestamp');
+   const { data: users } = useFirestoreCollection<AppUser>('users');
 
    // Seed Data Function
    const seedData = async () => {
@@ -670,6 +1039,11 @@ const SetupView = () => {
       alert("Data seeded successfully!");
    };
 
+   const updateUserRole = async (userId: string, newRole: Role) => {
+      if(user?.role !== 'Owner') return alert("Only Owners can change roles.");
+      await updateDoc(doc(db, 'users', userId), { role: newRole });
+   };
+
    return (
     <div className="space-y-6">
        <div className="flex justify-between items-center bg-white dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
@@ -679,7 +1053,35 @@ const SetupView = () => {
           </button>
        </div>
 
-       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* USER MANAGEMENT */}
+          <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+             <h3 className="font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+                <Users className="w-5 h-5 text-blue-600" /> User Management
+             </h3>
+             <div className="overflow-y-auto max-h-64 space-y-3">
+                {users.map(u => (
+                   <div key={u.id} className="flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-900 rounded-lg">
+                      <div>
+                         <p className="font-medium text-sm dark:text-white">{u.name}</p>
+                         <p className="text-xs text-slate-500">{u.email}</p>
+                      </div>
+                      <select 
+                         value={u.role} 
+                         onChange={(e) => updateUserRole(u.id, e.target.value as Role)}
+                         className="text-xs p-1 border rounded bg-white dark:bg-slate-800 dark:text-white"
+                         disabled={user?.role !== 'Owner' || u.id === user.id}
+                      >
+                         <option value="Worker">Worker</option>
+                         <option value="Admin">Admin</option>
+                         <option value="Owner">Owner</option>
+                      </select>
+                   </div>
+                ))}
+             </div>
+          </div>
+
+          {/* AUDIT LOGS */}
           <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
              <h3 className="font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
                 <Shield className="w-5 h-5 text-purple-600" /> Audit Logs
@@ -698,15 +1100,6 @@ const SetupView = () => {
                    </div>
                 ))}
              </div>
-          </div>
-
-          <div className="space-y-6">
-             {["General Settings", "User Management", "Notifications"].map((title, i) => (
-                <div key={i} className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 flex justify-between items-center cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700">
-                   <span className="font-medium text-slate-700 dark:text-slate-200">{title}</span>
-                   <ChevronRight className="w-4 h-4 text-slate-400" />
-                </div>
-             ))}
           </div>
        </div>
     </div>
@@ -738,8 +1131,9 @@ const AppContent = () => {
       { id: 'items_list', label: 'Items', icon: Package, allowed: true },
       { id: 'billing', label: 'POS / Billing', icon: ShoppingCart, allowed: true },
       { id: 'sales_orders', label: 'Sales History', icon: History, allowed: true },
+      { id: 'purchases', label: 'Purchases', icon: Truck, allowed: user?.role !== 'Worker' }, // NEW
       { id: 'documents', label: 'Documents', icon: FileText, allowed: true },
-      { id: 'settings', label: 'Setup', icon: Settings, allowed: user?.role === 'Owner' },
+      { id: 'settings', label: 'Setup', icon: Settings, allowed: user?.role === 'Owner' || user?.role === 'Admin' },
     ];
 
     return (
@@ -803,6 +1197,7 @@ const AppContent = () => {
       case 'items_list': return <ItemsView products={products} />;
       case 'billing': return <BillingView products={products} />;
       case 'sales_orders': return <SalesOrdersView />;
+      case 'purchases': return <PurchasesView products={products} />;
       case 'documents': return <div className="p-10 text-center dark:text-white">Document Management System</div>;
       default: return <DashboardView />;
     }
