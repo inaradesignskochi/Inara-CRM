@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, createContext, useContext 
 import { createRoot } from 'react-dom/client';
 import { GoogleGenAI } from "@google/genai";
 import { initializeApp } from "firebase/app";
-import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
 import { 
   getFirestore, collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, 
   query, orderBy, limit, where, serverTimestamp, writeBatch, Timestamp, getDoc, setDoc 
@@ -123,6 +123,7 @@ interface AuthContextType {
   user: AppUser | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  signup: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -190,12 +191,16 @@ const AuthProvider = ({ children }: { children?: React.ReactNode }) => {
     await signInWithEmailAndPassword(auth, email, password);
   };
 
+  const signup = async (email, password) => {
+    await createUserWithEmailAndPassword(auth, email, password);
+  };
+
   const logout = async () => {
     await signOut(auth);
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, signup, logout }}>
       {children}
     </AuthContext.Provider>
   );
@@ -232,17 +237,23 @@ const ThemeProvider = ({ children }: { children?: React.ReactNode }) => {
 // --- AUTH COMPONENTS ---
 
 const LoginScreen = () => {
+  const [isRegistering, setIsRegistering] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const { login } = useContext(AuthContext);
+  const { login, signup } = useContext(AuthContext);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError('');
     try {
-      await login(email, password);
+      if (isRegistering) {
+        await signup(email, password);
+      } else {
+        await login(email, password);
+      }
     } catch (err: any) {
-      setError("Login failed: " + err.message);
+      setError(err.message.replace('Firebase: ', ''));
     }
   };
 
@@ -251,7 +262,9 @@ const LoginScreen = () => {
       <div className="max-w-md w-full bg-white dark:bg-slate-800 rounded-2xl shadow-xl p-8 border border-slate-200 dark:border-slate-700">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">INARA DESIGNS</h1>
-          <p className="text-slate-500 dark:text-slate-400">Sign in to your account</p>
+          <p className="text-slate-500 dark:text-slate-400">
+            {isRegistering ? 'Create a new account' : 'Sign in to your account'}
+          </p>
         </div>
         
         {error && (
@@ -277,6 +290,7 @@ const LoginScreen = () => {
             <input 
               type="password" 
               required
+              minLength={6}
               className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-purple-500 outline-none transition-all"
               placeholder="••••••••"
               value={password}
@@ -287,11 +301,20 @@ const LoginScreen = () => {
             type="submit"
             className="w-full py-3 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg shadow-lg hover:shadow-purple-500/30 transition-all duration-200"
           >
-            Sign In
+            {isRegistering ? 'Sign Up' : 'Sign In'}
           </button>
         </form>
-        <div className="mt-6 text-center text-xs text-slate-400">
-           Enter your registered INARA DESIGNS credentials.
+        
+        <div className="mt-6 text-center">
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            {isRegistering ? "Already have an account?" : "Don't have an account?"}{" "}
+            <button 
+              onClick={() => { setIsRegistering(!isRegistering); setError(''); }}
+              className="text-purple-600 dark:text-purple-400 font-semibold hover:underline"
+            >
+              {isRegistering ? 'Sign In' : 'Sign Up'}
+            </button>
+          </p>
         </div>
       </div>
     </div>
