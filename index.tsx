@@ -1,24 +1,25 @@
+
 import React, { useState, useEffect, useRef, useMemo, createContext, useContext } from 'react';
 import { createRoot } from 'react-dom/client';
 import { GoogleGenAI } from "@google/genai";
 import { initializeApp } from "firebase/app";
-import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 import { 
   getFirestore, collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, 
-  query, orderBy, limit, where, serverTimestamp, writeBatch, Timestamp, getDoc, setDoc 
+  query, orderBy, serverTimestamp, writeBatch, getDoc, setDoc, limit
 } from "firebase/firestore";
 import { 
-  LayoutGrid, Users, ShoppingCart, Package, BarChart3, Settings, Search, Bell, Menu, X, Plus, 
-  Filter, ArrowLeft, MessageSquare, Send, Sparkles, MoreHorizontal, DollarSign, TrendingUp, 
-  Activity, Trash2, Save, Download, Store, Link as LinkIcon, LogOut, CreditCard, Facebook, 
-  Instagram, ChevronDown, ChevronRight, FileText, Truck, ClipboardList, Scan, Shield, Zap, 
-  Database, Globe, Mail, Moon, Sun, Lock, Loader2, AlertCircle, Printer, History, CheckCircle, Upload,
-  Wallet, PieChart as PieChartIcon, UserPlus, Phone, MapPin, Bot, Building2, Share2, FileInput, 
-  RefreshCw, Boxes, Layers
+  LayoutGrid, Users, ShoppingCart, Package, Settings, Search, Menu, X, Plus, 
+  Filter, MessageSquare, Send, Sparkles, DollarSign, TrendingUp, 
+  Trash2, Store, LogOut, Facebook, 
+  Instagram, ChevronDown, FileText, Truck, ClipboardList, Scan, Shield, Zap, 
+  Database, Bell, Moon, Sun, Lock, Loader2, AlertCircle, Printer, History, CheckCircle, Upload,
+  Wallet, PieChart as PieChartIcon, UserPlus, Phone, Building2, Layers, RefreshCw, Mail,
+  ArrowUpRight, ArrowDownRight, MoreVertical, CreditCard, Tag
 } from 'lucide-react';
 import { 
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, 
-  BarChart, Bar, Legend, PieChart, Pie, Cell 
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer,
+  BarChart, Bar, Cell
 } from 'recharts';
 
 // --- FIREBASE CONFIGURATION ---
@@ -31,20 +32,14 @@ const firebaseConfig = {
   appId: "1:370343505568:web:551fa56872706a0a8463c5"
 };
 
-// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// --- GEMINI AI CONFIGURATION ---
-// NOTE: In a real app, do not expose API keys on the client. This is for demo purposes as per instructions.
-const genAI = new GoogleGenAI({ apiKey: process.env.API_KEY || "YOUR_API_KEY_HERE" });
-
 // --- TYPES ---
-
 type Role = 'Owner' | 'Admin' | 'Worker';
 
-type Product = {
+interface Product {
   id: string;
   name: string;
   sku: string;
@@ -52,1065 +47,1075 @@ type Product = {
   stock: number;
   location: string;
   category: string;
-};
+}
 
-type CartItem = Product & { qty: number };
+interface CartItem extends Product { qty: number }
 
-type Expense = {
+interface Expense {
   id: string;
   date: string;
   description: string;
   amount: number;
   category: string;
   paymentMethod: string;
-  recordedBy: string;
-};
+}
 
-type Customer = {
+interface Customer {
   id: string;
   name: string;
   phone: string;
   email: string;
-  address: string;
   totalSpent: number;
   lastVisit: string;
-};
+}
 
-type Sale = {
+interface Sale {
   id: string;
-  date: string; // ISO string
-  createdAt?: any;
+  date: string;
   customer: string;
-  customerId?: string;
   amount: number;
   items: CartItem[];
-  channel: string;
-};
+}
 
-type Vendor = {
+interface Vendor {
   id: string;
   name: string;
-  email: string;
   phone: string;
-};
+  email: string;
+}
 
-type PurchaseOrder = {
+interface PurchaseOrder {
   id: string;
-  vendorId: string;
   vendorName: string;
-  status: 'Draft' | 'Ordered' | 'Received';
-  items: CartItem[];
+  status: 'Ordered' | 'Received';
   total: number;
   date: string;
-  createdAt?: any;
-};
+  items: CartItem[];
+}
 
-type InventoryLog = {
-  id: string;
-  date: string;
-  itemId: string;
-  itemName: string;
-  type: 'Adjustment' | 'Restock' | 'Damage' | 'Sale';
-  quantity: number;
-  reason: string;
-  user: string;
-};
-
-type AppUser = {
+interface AppUser {
   id: string;
   email: string;
   name: string;
   role: Role;
-};
-
-type AuditLog = {
-  id: string;
-  action: string;
-  details: string;
-  user: string;
-  timestamp: any;
-};
-
-// --- AUDIT LOGGER ---
-const logAudit = async (user: AppUser | null, action: string, details: string) => {
-  if (!user) return;
-  try {
-    await addDoc(collection(db, 'audit_logs'), {
-      action,
-      details,
-      user: user.email,
-      timestamp: serverTimestamp()
-    });
-  } catch (e) {
-    console.error("Failed to log audit", e);
-  }
-};
+}
 
 // --- CONTEXTS ---
-
-interface AuthContextType {
+const AuthContext = createContext<{
   user: AppUser | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  signup: (email: string, password: string) => Promise<void>;
+  login: (e: string, p: string) => Promise<void>;
   logout: () => Promise<void>;
-}
+}>(null!);
 
-const AuthContext = createContext<AuthContextType>(null!);
-
-interface ThemeContextType {
+const ThemeContext = createContext<{
   isDarkMode: boolean;
   toggleTheme: () => void;
-}
-
-const ThemeContext = createContext<ThemeContextType>(null!);
+}>(null!);
 
 // --- PROVIDERS ---
-
 const AuthProvider = ({ children }: { children?: React.ReactNode }) => {
   const [user, setUser] = useState<AppUser | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    return onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        try {
-          const userRef = doc(db, "users", firebaseUser.uid);
-          const userSnap = await getDoc(userRef);
-          let userData: AppUser;
-          if (userSnap.exists()) {
-             userData = { id: firebaseUser.uid, ...userSnap.data() } as AppUser;
-          } else {
-             const role = (firebaseUser.email?.includes('aneesh') || firebaseUser.email?.includes('admin')) ? 'Owner' : 'Worker';
-             userData = {
-                id: firebaseUser.uid,
-                email: firebaseUser.email || '',
-                name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
-                role: role as Role
-             };
-             await setDoc(userRef, {
-                email: userData.email,
-                name: userData.name,
-                role: userData.role
-             });
-          }
-          setUser(userData);
-        } catch (e) {
-          console.error("Error fetching user data", e);
-          setUser({ id: firebaseUser.uid, email: firebaseUser.email || '', name: 'User', role: 'Worker' });
+        const userSnap = await getDoc(doc(db, "users", firebaseUser.uid));
+        if (userSnap.exists()) {
+          setUser({ id: firebaseUser.uid, ...userSnap.data() } as AppUser);
+        } else {
+          const defaultData = { email: firebaseUser.email || '', name: 'User', role: 'Worker' as Role };
+          await setDoc(doc(db, "users", firebaseUser.uid), defaultData);
+          setUser({ id: firebaseUser.uid, ...defaultData });
         }
-      } else {
-        setUser(null);
-      }
+      } else setUser(null);
       setLoading(false);
     });
-    return unsubscribe;
   }, []);
 
-  const login = async (email, password) => { await signInWithEmailAndPassword(auth, email, password); };
-  const signup = async (email, password) => { await createUserWithEmailAndPassword(auth, email, password); };
-  const logout = async () => { await signOut(auth); };
+  const login = (e: string, p: string) => signInWithEmailAndPassword(auth, e, p).then(() => {});
+  const logout = () => signOut(auth);
 
-  return (
-    <AuthContext.Provider value={{ user, loading, login, signup, logout }}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={{ user, loading, login, logout }}>{children}</AuthContext.Provider>;
 };
 
 const ThemeProvider = ({ children }: { children?: React.ReactNode }) => {
-  const [isDarkMode, setIsDarkMode] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('theme') === 'dark' || 
-             (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
-    }
-    return false;
-  });
-
+  const [isDarkMode, setIsDarkMode] = useState(localStorage.getItem('theme') === 'dark');
   useEffect(() => {
-    if (isDarkMode) {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('theme', 'dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('theme', 'light');
-    }
+    document.documentElement.classList.toggle('dark', isDarkMode);
+    localStorage.setItem('theme', isDarkMode ? 'dark' : 'light');
   }, [isDarkMode]);
-
-  const toggleTheme = () => setIsDarkMode(!isDarkMode);
-
-  return (
-    <ThemeContext.Provider value={{ isDarkMode, toggleTheme }}>
-      {children}
-    </ThemeContext.Provider>
-  );
+  return <ThemeContext.Provider value={{ isDarkMode, toggleTheme: () => setIsDarkMode(!isDarkMode) }}>{children}</ThemeContext.Provider>;
 };
 
-// --- AUTH COMPONENT ---
+// --- GENERIC FIREBASE HOOK ---
+function useCollection<T>(name: string, sortField: string = 'date', limitCount: number = 50) {
+  const [data, setData] = useState<T[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    return onSnapshot(query(collection(db, name), orderBy(sortField, 'desc'), limit(limitCount)), (snap) => {
+      setData(snap.docs.map(d => ({ id: d.id, ...d.data() } as T)));
+      setLoading(false);
+    });
+  }, [name, sortField, limitCount]);
+  return { data, loading };
+}
 
-const LoginScreen = () => {
-  const [isRegistering, setIsRegistering] = useState(false);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const { login, signup } = useContext(AuthContext);
+// --- MODULES ---
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    try {
-      if (isRegistering) await signup(email, password);
-      else await login(email, password);
-    } catch (err: any) {
-      setError(err.message.replace('Firebase: ', ''));
-    }
-  };
+const DashboardView = ({ products, sales, expenses }: { products: Product[], sales: Sale[], expenses: Expense[] }) => {
+  const totalRev = sales.reduce((s, i) => s + i.amount, 0);
+  const totalExp = expenses.reduce((s, i) => s + i.amount, 0);
+  const lowStock = products.filter(p => p.stock < 5).length;
+
+  const chartData = useMemo(() => {
+    const map = new Map();
+    sales.slice(0, 30).forEach(s => {
+      const d = new Date(s.date).toLocaleDateString(undefined, { weekday: 'short' });
+      map.set(d, (map.get(d) || 0) + s.amount);
+    });
+    return Array.from(map.entries()).map(([name, value]) => ({ name, value })).reverse();
+  }, [sales]);
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col justify-center items-center p-4">
-      <div className="max-w-md w-full bg-white dark:bg-slate-800 rounded-2xl shadow-xl p-8 border border-slate-200 dark:border-slate-700">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">INARA DESIGNS</h1>
-          <p className="text-slate-500 dark:text-slate-400">{isRegistering ? 'Create a new account' : 'Sign in to your account'}</p>
+    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="bg-white dark:bg-slate-800 p-6 rounded-[24px] shadow-sm border dark:border-slate-700 hover:shadow-lg transition-all group overflow-hidden relative">
+          <div className="absolute -right-4 -bottom-4 opacity-5 group-hover:scale-110 transition-transform"><DollarSign className="w-24 h-24" /></div>
+          <div className="flex items-center gap-4 relative">
+            <div className="p-3 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 rounded-2xl"><TrendingUp className="w-6 h-6" /></div>
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Total Revenue</p>
+              <h3 className="text-2xl font-black dark:text-white">₹{totalRev.toLocaleString()}</h3>
+            </div>
+          </div>
+          <div className="mt-4 flex items-center gap-1 text-[10px] font-bold text-emerald-500">
+             <ArrowUpRight className="w-3 h-3" /> 12% vs last month
+          </div>
         </div>
-        {error && (
-           <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-300 text-sm rounded-lg flex items-center gap-2">
-             <AlertCircle className="w-4 h-4" /> {error}
+
+        <div className="bg-white dark:bg-slate-800 p-6 rounded-[24px] shadow-sm border dark:border-slate-700 hover:shadow-lg transition-all group overflow-hidden relative">
+          <div className="absolute -right-4 -bottom-4 opacity-5 group-hover:scale-110 transition-transform"><Wallet className="w-24 h-24" /></div>
+          <div className="flex items-center gap-4 relative">
+            <div className="p-3 bg-red-100 dark:bg-red-900/30 text-red-600 rounded-2xl"><DollarSign className="w-6 h-6" /></div>
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Total Expenses</p>
+              <h3 className="text-2xl font-black dark:text-white">₹{totalExp.toLocaleString()}</h3>
+            </div>
+          </div>
+          <div className="mt-4 flex items-center gap-1 text-[10px] font-bold text-red-500">
+             <ArrowDownRight className="w-3 h-3" /> 4% higher outflow
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-slate-800 p-6 rounded-[24px] shadow-sm border dark:border-slate-700 hover:shadow-lg transition-all group overflow-hidden relative">
+          <div className="absolute -right-4 -bottom-4 opacity-5 group-hover:scale-110 transition-transform"><Package className="w-24 h-24" /></div>
+          <div className="flex items-center gap-4 relative">
+            <div className="p-3 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 rounded-2xl"><Package className="w-6 h-6" /></div>
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Total Items</p>
+              <h3 className="text-2xl font-black dark:text-white">{products.length}</h3>
+            </div>
+          </div>
+          <div className="mt-4 text-[10px] font-bold text-slate-400">
+             Stocking 14 categories
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-slate-800 p-6 rounded-[24px] shadow-sm border dark:border-slate-700 hover:shadow-lg transition-all group overflow-hidden relative">
+          <div className="absolute -right-4 -bottom-4 opacity-5 group-hover:scale-110 transition-transform"><AlertCircle className="w-24 h-24" /></div>
+          <div className="flex items-center gap-4 relative">
+            <div className="p-3 bg-amber-100 dark:bg-amber-900/30 text-amber-600 rounded-2xl"><AlertCircle className="w-6 h-6" /></div>
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Low Stock SKUs</p>
+              <h3 className="text-2xl font-black dark:text-white">{lowStock}</h3>
+            </div>
+          </div>
+          <div className="mt-4 text-[10px] font-bold text-amber-500">
+             Requires immediate reorder
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 bg-white dark:bg-slate-800 p-8 rounded-[32px] shadow-sm border dark:border-slate-700 h-[450px]">
+          <div className="flex justify-between items-center mb-8">
+            <h3 className="font-black dark:text-white flex items-center gap-3">
+              <TrendingUp className="w-5 h-5 text-indigo-500" />
+              Sales Performance
+            </h3>
+            <select className="bg-slate-50 dark:bg-slate-900 border-none text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl outline-none focus:ring-2 ring-indigo-500">
+               <option>Last 7 Days</option>
+               <option>Last 30 Days</option>
+            </select>
+          </div>
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={chartData}>
+              <defs>
+                <linearGradient id="colorVal" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.3}/>
+                  <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#334155" opacity={0.1} />
+              <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 'bold'}} />
+              <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 'bold'}} tickFormatter={v => `₹${v}`} />
+              <RechartsTooltip 
+                contentStyle={{ 
+                  borderRadius: '20px', 
+                  border: 'none', 
+                  boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04)',
+                  backgroundColor: '#1e293b',
+                  color: 'white',
+                  padding: '12px'
+                }} 
+              />
+              <Area type="monotone" dataKey="value" stroke="#8b5cf6" fillOpacity={1} fill="url(#colorVal)" strokeWidth={4} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="bg-white dark:bg-slate-800 p-8 rounded-[32px] shadow-sm border dark:border-slate-700">
+           <h3 className="font-black mb-8 dark:text-white flex items-center gap-3">
+             <ArrowUpRight className="w-5 h-5 text-emerald-500" />
+             Top Selling Products
+           </h3>
+           <div className="space-y-6">
+              {products.slice(0, 5).map((p, idx) => (
+                <div key={p.id} className="flex items-center justify-between">
+                   <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-slate-100 dark:bg-slate-900 rounded-xl flex items-center justify-center font-black text-slate-500 text-xs">#{idx+1}</div>
+                      <div>
+                         <p className="text-sm font-bold dark:text-white truncate max-w-[120px]">{p.name}</p>
+                         <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{p.sku}</p>
+                      </div>
+                   </div>
+                   <p className="font-black text-indigo-600 dark:text-indigo-400">₹{p.price}</p>
+                </div>
+              ))}
            </div>
-        )}
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Email Address</label>
-            <input type="email" required className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-purple-500 outline-none transition-all" placeholder="name@company.com" value={email} onChange={e => setEmail(e.target.value)} />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Password</label>
-            <input type="password" required minLength={6} className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-purple-500 outline-none transition-all" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} />
-          </div>
-          <button type="submit" className="w-full py-3 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg shadow-lg hover:shadow-purple-500/30 transition-all duration-200">{isRegistering ? 'Sign Up' : 'Sign In'}</button>
-        </form>
-        <div className="mt-6 text-center">
-          <p className="text-sm text-slate-500 dark:text-slate-400">{isRegistering ? "Already have an account?" : "Don't have an account?"} <button onClick={() => { setIsRegistering(!isRegistering); setError(''); }} className="text-purple-600 dark:text-purple-400 font-semibold hover:underline">{isRegistering ? 'Sign In' : 'Sign Up'}</button></p>
+           <button className="w-full mt-10 py-4 bg-slate-50 dark:bg-slate-900 rounded-2xl text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-indigo-600 transition-colors">View All Sales</button>
         </div>
       </div>
     </div>
   );
 };
 
-// --- HELPER HOOKS ---
-
-function useFirestoreCollection<T>(collectionName: string, orderField?: string) {
-  const [data, setData] = useState<T[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let q = query(collection(db, collectionName));
-    if (orderField) {
-      q = query(collection(db, collectionName), orderBy(orderField, 'desc'));
-    }
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as T[];
-      setData(items);
-      setLoading(false);
-    }, (error) => {
-      console.error(`Error fetching ${collectionName}:`, error);
-      setLoading(false);
-    });
-
-    return () => unsubscribe();
-  }, [collectionName, orderField]);
-
-  return { data, loading };
-}
-
-// --- SUB-VIEWS ---
-
-// 1. ITEMS VIEW
 const ItemsView = ({ products }: { products: Product[] }) => {
-  const { user } = useContext(AuthContext);
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [newItem, setNewItem] = useState({ name: '', sku: '', price: '', stock: '', category: 'General' });
-  const [importing, setImporting] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState({ name: '', sku: '', price: 0, stock: 0, category: 'Saree' });
 
-  const handleAddItem = async () => {
-    if (!newItem.name || !newItem.price) return;
-    await addDoc(collection(db, 'products'), {
-      ...newItem,
-      price: Number(newItem.price),
-      stock: Number(newItem.stock),
-      location: 'Warehouse'
-    });
-    await logAudit(user, 'CREATE_ITEM', `Created item ${newItem.name}`);
-    setShowAddModal(false);
-    setNewItem({ name: '', sku: '', price: '', stock: '', category: 'General' });
-  };
-
-  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-     // Simplified import logic
-     alert("Import started (Demo Mode)");
+  const handleSave = async () => {
+    if (!form.name) return;
+    await addDoc(collection(db, 'products'), { ...form, location: 'Main Store' });
+    setShowAdd(false);
+    setForm({ name: '', sku: '', price: 0, stock: 0, category: 'Saree' });
   };
 
   return (
-    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
-      <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center bg-orange-50/30 dark:bg-orange-900/10">
-        <h2 className="text-orange-800 dark:text-orange-300 font-bold text-lg flex items-center gap-2">
-          <Package className="w-5 h-5" /> Product List
-        </h2>
-        <div className="flex gap-2">
-           <input type="file" ref={fileInputRef} className="hidden" onChange={handleImport} />
-           <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 px-3 py-2 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-lg text-sm"><Upload className="w-4 h-4"/> Import</button>
-           <button onClick={() => setShowAddModal(true)} className="flex items-center gap-2 px-3 py-2 bg-orange-600 text-white rounded-lg text-sm hover:bg-orange-700"><Plus className="w-4 h-4"/> New Item</button>
+    <div className="bg-white dark:bg-slate-800 rounded-[32px] border dark:border-slate-700 overflow-hidden shadow-sm animate-in fade-in duration-500">
+      <div className="p-8 border-b dark:border-slate-700 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-50/50 dark:bg-slate-900/20">
+        <div>
+          <h2 className="text-2xl font-black dark:text-white tracking-tight">Stock Inventory</h2>
+          <p className="text-xs font-medium text-slate-500 mt-1">Manage variants, pricing and real-time stock counts.</p>
+        </div>
+        <div className="flex gap-3">
+          <button className="p-3 bg-white dark:bg-slate-800 rounded-2xl shadow-sm border dark:border-slate-700 hover:bg-slate-50 transition-colors"><Filter className="w-5 h-5 text-slate-500" /></button>
+          <button onClick={() => setShowAdd(true)} className="flex items-center gap-2 bg-indigo-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-500/20 active:scale-95">
+            <Plus className="w-4 h-4" /> Add Product
+          </button>
         </div>
       </div>
-      
-      {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-           <div className="bg-white dark:bg-slate-800 p-6 rounded-xl w-full max-w-md shadow-2xl">
-              <h3 className="text-lg font-bold mb-4 dark:text-white">New Product</h3>
-              <div className="space-y-3">
-                 <input placeholder="Item Name" className="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} />
-                 <input placeholder="SKU" className="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" value={newItem.sku} onChange={e => setNewItem({...newItem, sku: e.target.value})} />
-                 <div className="flex gap-3">
-                    <input type="number" placeholder="Price" className="w-1/2 p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" value={newItem.price} onChange={e => setNewItem({...newItem, price: e.target.value})} />
-                    <input type="number" placeholder="Stock" className="w-1/2 p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" value={newItem.stock} onChange={e => setNewItem({...newItem, stock: e.target.value})} />
-                 </div>
-                 <select className="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" value={newItem.category} onChange={e => setNewItem({...newItem, category: e.target.value})}>
-                    <option>General</option>
-                    <option>Saree</option>
-                    <option>Fabric</option>
-                 </select>
-              </div>
-              <div className="flex gap-3 mt-6">
-                 <button onClick={() => setShowAddModal(false)} className="flex-1 py-2 text-slate-500">Cancel</button>
-                 <button onClick={handleAddItem} className="flex-1 py-2 bg-orange-600 text-white rounded-lg">Save</button>
-              </div>
-           </div>
-        </div>
-      )}
 
       <div className="overflow-x-auto">
-        <table className="w-full text-left text-sm text-slate-600 dark:text-slate-400">
-          <thead className="bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white font-semibold border-b border-slate-200 dark:border-slate-700">
-            <tr><th className="px-6 py-3">Name</th><th className="px-6 py-3">SKU</th><th className="px-6 py-3">Stock</th><th className="px-6 py-3">Price</th></tr>
+        <table className="w-full text-left text-sm whitespace-nowrap">
+          <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 font-bold uppercase tracking-widest text-[10px] border-b dark:border-slate-700">
+            <tr>
+              <th className="px-8 py-6">Identity</th>
+              <th className="px-8 py-6">Category</th>
+              <th className="px-8 py-6">Stock Level</th>
+              <th className="px-8 py-6 text-right">M.R.P</th>
+              <th className="px-8 py-6 text-center">Action</th>
+            </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+          <tbody className="divide-y dark:divide-slate-700">
             {products.map(p => (
-              <tr key={p.id} className="hover:bg-slate-50 dark:hover:bg-slate-700">
-                <td className="px-6 py-3 font-medium text-slate-900 dark:text-white">{p.name}</td>
-                <td className="px-6 py-3">{p.sku}</td>
-                <td className="px-6 py-3"><span className={`px-2 py-1 rounded text-xs ${p.stock<5?'bg-red-100 text-red-700':'bg-emerald-100 text-emerald-700'}`}>{p.stock}</span></td>
-                <td className="px-6 py-3">₹{p.price}</td>
+              <tr key={p.id} className="hover:bg-indigo-50/30 dark:hover:bg-slate-700/30 transition-colors group">
+                <td className="px-8 py-6">
+                   <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-slate-100 dark:bg-slate-900 rounded-xl flex items-center justify-center"><Tag className="w-5 h-5 text-indigo-600" /></div>
+                      <div>
+                        <div className="font-black dark:text-white text-base">{p.name}</div>
+                        <div className="text-[10px] font-bold text-slate-400 font-mono tracking-tighter uppercase">{p.sku}</div>
+                      </div>
+                   </div>
+                </td>
+                <td className="px-8 py-6">
+                   <span className="px-3 py-1 bg-slate-100 dark:bg-slate-900 rounded-lg text-[10px] font-black uppercase tracking-widest text-slate-500">{p.category}</span>
+                </td>
+                <td className="px-8 py-6">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 w-24 h-1.5 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden">
+                       <div className={`h-full ${p.stock < 5 ? 'bg-red-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, (p.stock / 20) * 100)}%` }}></div>
+                    </div>
+                    <span className={`text-xs font-black ${p.stock < 5 ? 'text-red-500' : 'text-slate-500'}`}>{p.stock}</span>
+                  </div>
+                </td>
+                <td className="px-8 py-6 text-right font-black text-lg text-indigo-600 dark:text-indigo-400">₹{p.price}</td>
+                <td className="px-8 py-6 text-center">
+                   <button className="p-2 hover:bg-white dark:hover:bg-slate-700 rounded-xl transition-colors"><MoreVertical className="w-4 h-4 text-slate-400" /></button>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      {showAdd && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md animate-in fade-in duration-300">
+          <div className="bg-white dark:bg-slate-800 w-full max-w-md rounded-[40px] p-10 shadow-2xl scale-in duration-300">
+            <h3 className="text-3xl font-black mb-2 dark:text-white tracking-tight">New Asset</h3>
+            <p className="text-sm font-medium text-slate-500 mb-10">Define the core specifications of the product.</p>
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Asset Title</label>
+                <input className="w-full p-5 bg-slate-50 dark:bg-slate-900 border-none rounded-2xl dark:text-white focus:ring-2 ring-indigo-500 transition-all text-sm shadow-inner" placeholder="e.g. Banarasi Silk Saree" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                 <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">SKU Reference</label>
+                    <input className="w-full p-5 bg-slate-50 dark:bg-slate-900 border-none rounded-2xl dark:text-white focus:ring-2 ring-indigo-500 transition-all text-sm shadow-inner" placeholder="BSS-001" value={form.sku} onChange={e => setForm({...form, sku: e.target.value})} />
+                 </div>
+                 <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Category</label>
+                    <select className="w-full p-5 bg-slate-50 dark:bg-slate-900 border-none rounded-2xl dark:text-white focus:ring-2 ring-indigo-500 transition-all text-sm shadow-inner" value={form.category} onChange={e => setForm({...form, category: e.target.value})}>
+                       <option>Saree</option>
+                       <option>Dress</option>
+                       <option>Fabric</option>
+                       <option>Accessories</option>
+                    </select>
+                 </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Price (₹)</label>
+                  <input type="number" className="w-full p-5 bg-slate-50 dark:bg-slate-900 border-none rounded-2xl dark:text-white focus:ring-2 ring-indigo-500 transition-all text-sm shadow-inner" value={form.price} onChange={e => setForm({...form, price: Number(e.target.value)})} />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Opening Stock</label>
+                  <input type="number" className="w-full p-5 bg-slate-50 dark:bg-slate-900 border-none rounded-2xl dark:text-white focus:ring-2 ring-indigo-500 transition-all text-sm shadow-inner" value={form.stock} onChange={e => setForm({...form, stock: Number(e.target.value)})} />
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-4 mt-12">
+              <button onClick={() => setShowAdd(false)} className="flex-1 py-5 text-slate-500 font-black uppercase tracking-widest hover:bg-slate-100 dark:hover:bg-slate-900 rounded-2xl transition-all text-[10px]">Discard</button>
+              <button onClick={handleSave} className="flex-1 py-5 bg-indigo-600 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-indigo-700 shadow-2xl shadow-indigo-500/40 transition-all active:scale-95 text-[10px]">Register Asset</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
-// 2. INVENTORY ADJUSTMENTS
-const InventoryAdjustmentsView = ({ products }: { products: Product[] }) => {
-   const { user } = useContext(AuthContext);
-   const { data: logs } = useFirestoreCollection<InventoryLog>('inventory_logs', 'date');
-   const [itemId, setItemId] = useState('');
-   const [qty, setQty] = useState(0);
-   const [type, setType] = useState<'Adjustment'|'Damage'|'Restock'>('Adjustment');
-   const [reason, setReason] = useState('');
-
-   const handleAdjust = async () => {
-      if(!itemId || qty === 0) return;
-      const product = products.find(p => p.id === itemId);
-      if(!product) return;
-      
-      const newStock = type === 'Restock' ? product.stock + qty : product.stock - qty;
-      
-      const batch = writeBatch(db);
-      batch.update(doc(db, 'products', itemId), { stock: newStock });
-      batch.set(doc(collection(db, 'inventory_logs')), {
-         date: new Date().toISOString(),
-         itemId,
-         itemName: product.name,
-         type,
-         quantity: qty,
-         reason,
-         user: user?.email
-      });
-      await batch.commit();
-      setItemId(''); setQty(0); setReason('');
-      await logAudit(user, 'INVENTORY_ADJUST', `Adjusted ${product.name} by ${type === 'Restock' ? '+' : '-'}${qty}`);
-   };
-
-   return (
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-         <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-slate-200 dark:border-slate-700">
-            <h3 className="font-bold text-slate-900 dark:text-white mb-4">New Adjustment</h3>
-            <div className="space-y-4">
-               <div>
-                  <label className="text-sm text-slate-500 mb-1 block">Product</label>
-                  <select className="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" value={itemId} onChange={e => setItemId(e.target.value)}>
-                     <option value="">Select Product</option>
-                     {products.map(p => <option key={p.id} value={p.id}>{p.name} (Cur: {p.stock})</option>)}
-                  </select>
-               </div>
-               <div>
-                  <label className="text-sm text-slate-500 mb-1 block">Type</label>
-                  <div className="flex gap-2">
-                     {['Adjustment', 'Damage', 'Restock'].map(t => (
-                        <button key={t} onClick={() => setType(t as any)} className={`flex-1 py-2 text-sm rounded border ${type === t ? 'bg-purple-50 border-purple-500 text-purple-700' : 'border-slate-200 text-slate-600'}`}>{t}</button>
-                     ))}
-                  </div>
-               </div>
-               <div>
-                   <label className="text-sm text-slate-500 mb-1 block">Quantity</label>
-                   <input type="number" className="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" value={qty} onChange={e => setQty(Number(e.target.value))} />
-               </div>
-               <div>
-                   <label className="text-sm text-slate-500 mb-1 block">Reason</label>
-                   <input className="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" value={reason} onChange={e => setReason(e.target.value)} />
-               </div>
-               <button onClick={handleAdjust} className="w-full py-2 bg-purple-600 text-white rounded hover:bg-purple-700">Update Stock</button>
-            </div>
-         </div>
-         <div className="md:col-span-2 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
-            <div className="p-4 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 font-bold dark:text-white">Recent Movements</div>
-            <div className="overflow-x-auto h-96">
-               <table className="w-full text-left text-sm text-slate-600 dark:text-slate-400">
-                  <thead className="bg-slate-50 dark:bg-slate-900 font-semibold border-b"><tr><th className="p-3">Date</th><th className="p-3">Item</th><th className="p-3">Type</th><th className="p-3">Qty</th><th className="p-3">Reason</th></tr></thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-                     {logs.map(log => (
-                        <tr key={log.id}>
-                           <td className="p-3">{new Date(log.date).toLocaleDateString()}</td>
-                           <td className="p-3 font-medium dark:text-white">{log.itemName}</td>
-                           <td className="p-3"><span className={`text-xs px-2 py-1 rounded ${log.type === 'Restock' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{log.type}</span></td>
-                           <td className="p-3">{log.quantity}</td>
-                           <td className="p-3 text-slate-400">{log.reason}</td>
-                        </tr>
-                     ))}
-                  </tbody>
-               </table>
-            </div>
-         </div>
-      </div>
-   );
-};
-
-// 3. BILLING VIEW
 const BillingView = ({ products }: { products: Product[] }) => {
-  const { user } = useContext(AuthContext);
-  const { data: customers } = useFirestoreCollection<Customer>('customers', 'name');
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [customerSearch, setCustomerSearch] = useState('');
-  const [searchTerm, setSearchTerm] = useState('');
-  
-  const filteredProducts = products.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()));
-  const addToCart = (p: Product) => {
-     setCart(prev => {
-        const exist = prev.find(i => i.id === p.id);
-        if(exist) return prev.map(i => i.id === p.id ? {...i, qty: i.qty+1} : i);
-        return [...prev, {...p, qty: 1}];
-     });
-  };
-  const cartTotal = cart.reduce((s,i) => s + (i.price*i.qty), 0);
+  const [search, setSearch] = useState('');
+  const [custName, setCustName] = useState('');
+  const [showReceipt, setShowReceipt] = useState<{sale: any, items: CartItem[]} | null>(null);
 
-  const handleSale = async () => {
-     if(cart.length === 0) return;
-     const sale = { date: new Date().toISOString(), customer: customerSearch||'Walk-in', amount: cartTotal, items: cart, channel: 'POS', createdAt: serverTimestamp() };
-     await addDoc(collection(db, 'sales'), sale);
-     
-     const batch = writeBatch(db);
-     cart.forEach(i => batch.update(doc(db, 'products', i.id), { stock: Math.max(0, i.stock - i.qty) }));
-     await batch.commit();
-     
-     setCart([]); setCustomerSearch('');
-     await logAudit(user, 'SALE', `POS Sale ₹${cartTotal}`);
-     alert("Sale Completed!");
+  const filtered = products.filter(p => p.name.toLowerCase().includes(search.toLowerCase()) || p.sku.toLowerCase().includes(search.toLowerCase()));
+
+  const addToCart = (p: Product) => {
+    if (p.stock <= 0) return alert("Insufficient Stock Level!");
+    setCart(prev => {
+      const existing = prev.find(i => i.id === p.id);
+      if (existing) return prev.map(i => i.id === p.id ? { ...i, qty: i.qty + 1 } : i);
+      return [...prev, { ...p, qty: 1 }];
+    });
+  };
+
+  const total = cart.reduce((s, i) => s + (i.price * i.qty), 0);
+
+  const handleCheckout = async () => {
+    if (!cart.length) return;
+    const saleData = { 
+      date: new Date().toISOString(), 
+      customer: custName || 'Counter Customer', 
+      amount: total, 
+      items: cart,
+      txRef: `TXN-${Math.random().toString(36).substring(7).toUpperCase()}`
+    };
+    
+    await addDoc(collection(db, 'sales'), saleData);
+    const batch = writeBatch(db);
+    cart.forEach(i => batch.update(doc(db, 'products', i.id), { stock: Math.max(0, i.stock - i.qty) }));
+    await batch.commit();
+    
+    setShowReceipt({ sale: saleData, items: cart });
+    setCart([]); setCustName('');
   };
 
   return (
-     <div className="flex h-[calc(100vh-140px)] gap-6">
-        <div className="flex-1 flex flex-col">
-           <input className="w-full p-3 mb-4 rounded-xl border dark:bg-slate-800 dark:border-slate-700 dark:text-white shadow-sm" placeholder="Search Items..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-           <div className="grid grid-cols-3 lg:grid-cols-4 gap-4 overflow-y-auto pr-2">
-              {filteredProducts.map(p => (
-                 <div key={p.id} onClick={() => addToCart(p)} className="bg-white dark:bg-slate-800 p-3 rounded-xl border dark:border-slate-700 cursor-pointer hover:border-purple-500 shadow-sm">
-                    <div className="font-bold dark:text-white truncate">{p.name}</div>
-                    <div className="flex justify-between mt-2 text-sm">
-                       <span className="text-slate-500">Stock: {p.stock}</span>
-                       <span className="font-bold text-purple-600">₹{p.price}</span>
-                    </div>
+    <div className="flex flex-col lg:flex-row gap-8 h-[calc(100vh-140px)] animate-in fade-in duration-500 relative">
+      <div className="flex-1 flex flex-col min-h-0 bg-white dark:bg-slate-800 p-8 rounded-[40px] border dark:border-slate-700 shadow-sm overflow-hidden">
+        <div className="relative mb-8">
+          <Search className="absolute left-6 top-1/2 -translate-y-1/2 w-6 h-6 text-slate-400" />
+          <input className="w-full pl-16 pr-8 py-5 bg-slate-50 dark:bg-slate-900/50 rounded-2xl border-none shadow-inner dark:text-white focus:ring-2 ring-indigo-500 transition-all text-xl font-bold placeholder:font-medium" placeholder="Quick search product or SKU..." value={search} onChange={e => setSearch(e.target.value)} />
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6 overflow-y-auto pr-2 pb-6 flex-1 custom-scrollbar">
+          {filtered.map(p => (
+            <div key={p.id} onClick={() => addToCart(p)} className={`group relative bg-white dark:bg-slate-900 p-6 rounded-[32px] shadow-sm border dark:border-slate-700 cursor-pointer hover:border-indigo-500 hover:shadow-2xl transition-all active:scale-95 ${p.stock <= 0 ? 'opacity-40 pointer-events-none grayscale' : ''}`}>
+              <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity"><Plus className="w-7 h-7 text-indigo-600 bg-indigo-50 rounded-full p-1.5" /></div>
+              <div className="w-12 h-12 bg-indigo-50 dark:bg-slate-800 rounded-2xl flex items-center justify-center mb-4"><Tag className="w-6 h-6 text-indigo-600" /></div>
+              <h4 className="font-black dark:text-white text-base truncate pr-6">{p.name}</h4>
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mt-1">{p.sku}</p>
+              <div className="flex justify-between items-end mt-6">
+                <p className="text-indigo-600 dark:text-indigo-400 font-black text-2xl">₹{p.price}</p>
+                <div className="text-right">
+                   <p className={`text-[10px] font-black uppercase tracking-widest ${p.stock < 10 ? 'text-red-500' : 'text-emerald-500'}`}>{p.stock} units</p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      
+      <div className="w-full lg:w-[450px] bg-white dark:bg-slate-800 rounded-[40px] shadow-2xl border dark:border-slate-700 flex flex-col h-full overflow-hidden">
+        <div className="p-10 border-b dark:border-slate-700 bg-indigo-600 text-white relative">
+          <div className="absolute top-0 right-0 p-8 opacity-10"><ShoppingCart className="w-24 h-24" /></div>
+          <h2 className="text-3xl font-black tracking-tight flex items-center gap-4 relative">Live Terminal</h2>
+          <p className="text-indigo-100 text-[10px] font-black uppercase tracking-[0.3em] mt-2 relative">Checkout Session: {new Date().getHours()}:{new Date().getMinutes()}</p>
+        </div>
+        
+        <div className="flex-1 overflow-y-auto p-10 space-y-8 custom-scrollbar">
+          {cart.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full text-slate-300 dark:text-slate-600 gap-6 opacity-50">
+              <div className="w-24 h-24 bg-slate-50 dark:bg-slate-900 rounded-[32px] flex items-center justify-center"><Package className="w-12 h-12" /></div>
+              <p className="text-[10px] font-black uppercase tracking-[0.3em]">Session Inactive</p>
+            </div>
+          ) : (
+            cart.map(i => (
+              <div key={i.id} className="flex justify-between items-center group animate-in slide-in-from-right-4">
+                <div className="flex-1 min-w-0 pr-6">
+                  <p className="font-black dark:text-white truncate text-base mb-1">{i.name}</p>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{i.qty} units x ₹{i.price}</p>
+                </div>
+                <div className="flex items-center bg-slate-100 dark:bg-slate-900 p-1.5 rounded-2xl">
+                    <button onClick={() => setCart(prev => prev.map(item => item.id === i.id ? {...item, qty: Math.max(0, item.qty - 1)} : item).filter(item => item.qty > 0))} className="w-10 h-10 rounded-xl hover:bg-white dark:hover:bg-slate-700 flex items-center justify-center transition-all text-lg font-black">-</button>
+                    <span className="w-12 text-center font-black dark:text-white text-sm">{i.qty}</span>
+                    <button onClick={() => addToCart(i)} className="w-10 h-10 rounded-xl hover:bg-white dark:hover:bg-slate-700 flex items-center justify-center transition-all text-lg font-black">+</button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="p-10 border-t dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50">
+          <div className="space-y-4 mb-10">
+            <div className="flex justify-between text-slate-500 text-[10px] font-black uppercase tracking-widest">
+              <span>Subtotal</span>
+              <span>₹{total.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between text-slate-500 text-[10px] font-black uppercase tracking-widest">
+              <span>Sales Tax (0%)</span>
+              <span>₹0.00</span>
+            </div>
+            <div className="flex justify-between items-center text-4xl font-black dark:text-white pt-4">
+              <span>Total</span>
+              <span className="text-indigo-600 dark:text-indigo-400">₹{total.toLocaleString()}</span>
+            </div>
+          </div>
+          
+          <div className="space-y-4">
+            <div className="relative">
+               <Users className="absolute left-5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+               <input className="w-full pl-12 pr-6 py-5 bg-white dark:bg-slate-800 rounded-2xl border-none shadow-sm text-sm dark:text-white font-bold placeholder:font-medium" placeholder="Customer Mobile / Name" value={custName} onChange={e => setCustName(e.target.value)} />
+            </div>
+            <button onClick={handleCheckout} disabled={!cart.length} className="w-full py-6 bg-indigo-600 text-white rounded-[24px] font-black uppercase tracking-[0.2em] hover:bg-indigo-700 disabled:opacity-50 transition-all shadow-2xl shadow-indigo-500/30 active:scale-95 text-sm">Validate & Pay</button>
+          </div>
+        </div>
+      </div>
+
+      {showReceipt && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/90 backdrop-blur-xl animate-in fade-in">
+           <div className="bg-white text-slate-900 w-full max-w-sm rounded-[40px] p-10 shadow-2xl relative overflow-hidden flex flex-col items-center text-center">
+              <div className="absolute top-0 left-0 w-full h-2 bg-indigo-600"></div>
+              <div className="w-20 h-20 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mb-6"><CheckCircle className="w-10 h-10" /></div>
+              <h3 className="text-3xl font-black tracking-tight mb-2">Transaction Success</h3>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-10">Ref: {showReceipt.sale.txRef}</p>
+              
+              <div className="w-full space-y-4 text-left border-y py-6 mb-10">
+                 {showReceipt.items.map(it => (
+                   <div key={it.id} className="flex justify-between text-sm">
+                      <span className="font-bold">{it.name} <span className="text-slate-400 ml-1">x{it.qty}</span></span>
+                      <span className="font-black">₹{(it.price * it.qty).toLocaleString()}</span>
+                   </div>
+                 ))}
+                 <div className="pt-4 border-t flex justify-between items-center">
+                    <span className="text-xs font-black uppercase tracking-widest">Total Paid</span>
+                    <span className="text-2xl font-black text-indigo-600">₹{showReceipt.sale.amount.toLocaleString()}</span>
                  </div>
-              ))}
+              </div>
+
+              <div className="flex gap-4 w-full">
+                 <button onClick={() => setShowReceipt(null)} className="flex-1 py-4 bg-slate-100 rounded-2xl font-black text-[10px] uppercase tracking-widest text-slate-600 hover:bg-slate-200 transition-all">Close</button>
+                 <button className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl shadow-indigo-500/20 hover:bg-indigo-700 transition-all flex items-center justify-center gap-2"><Printer className="w-3 h-3" /> Print Invoice</button>
+              </div>
            </div>
         </div>
-        <div className="w-80 bg-white dark:bg-slate-800 flex flex-col rounded-xl border dark:border-slate-700 shadow-lg h-full">
-           <div className="p-4 border-b dark:border-slate-700 font-bold bg-purple-50 dark:bg-purple-900/20 text-purple-800 dark:text-purple-300">Current Sale</div>
-           <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {cart.map(i => (
-                 <div key={i.id} className="flex justify-between items-center text-sm dark:text-slate-300">
-                    <div>{i.name} <span className="text-xs text-slate-500">x{i.qty}</span></div>
-                    <div className="font-bold">₹{i.price*i.qty}</div>
-                 </div>
-              ))}
-           </div>
-           <div className="p-4 border-t dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50">
-              <div className="flex justify-between text-lg font-bold mb-4 dark:text-white"><span>Total</span><span>₹{cartTotal}</span></div>
-              <input className="w-full mb-3 p-2 text-sm border rounded dark:bg-slate-800 dark:border-slate-700 dark:text-white" placeholder="Customer Name" value={customerSearch} onChange={e => setCustomerSearch(e.target.value)} />
-              <button onClick={handleSale} className="w-full py-3 bg-purple-600 text-white rounded font-bold hover:bg-purple-700">Checkout</button>
-           </div>
-        </div>
-     </div>
+      )}
+    </div>
   );
 };
 
-// 4. PURCHASES VIEW (RESTORED)
-const PurchasesView = ({ products }: { products: Product[] }) => {
-   const { user } = useContext(AuthContext);
-   const { data: vendors } = useFirestoreCollection<Vendor>('vendors');
-   const { data: orders } = useFirestoreCollection<PurchaseOrder>('purchase_orders', 'createdAt');
-   
-   const [activeTab, setActiveTab] = useState<'orders' | 'vendors'>('orders');
-   const [showVendorModal, setShowVendorModal] = useState(false);
-   const [showPOModal, setShowPOModal] = useState(false);
-   const [newVendor, setNewVendor] = useState({ name: '', email: '', phone: '' });
-   const [newPO, setNewPO] = useState<{ vendorId: string, items: CartItem[] }>({ vendorId: '', items: [] });
-   const [poItem, setPOItem] = useState<{ productId: string, qty: number }>({ productId: '', qty: 1 });
-
-   const handleAddVendor = async () => {
-     if(!newVendor.name) return;
-     await addDoc(collection(db, 'vendors'), newVendor);
-     setShowVendorModal(false); setNewVendor({ name: '', email: '', phone: '' });
-   };
-
-   const handleCreatePO = async () => {
-      if(!newPO.vendorId || newPO.items.length === 0) return;
-      const vendor = vendors.find(v => v.id === newPO.vendorId);
-      const total = newPO.items.reduce((sum, item) => sum + (item.price * item.qty), 0);
-      await addDoc(collection(db, 'purchase_orders'), {
-         vendorId: newPO.vendorId, vendorName: vendor?.name || 'Unknown', items: newPO.items, status: 'Ordered', total, date: new Date().toISOString(), createdAt: serverTimestamp()
-      });
-      setShowPOModal(false); setNewPO({ vendorId: '', items: [] });
-      await logAudit(user, 'CREATE_PO', `Created PO for ${vendor?.name}`);
-   };
-
-   const handleReceivePO = async (order: PurchaseOrder) => {
-      if(order.status !== 'Ordered') return;
-      const batch = writeBatch(db);
-      order.items.forEach(item => {
-         const currentProd = products.find(p => p.id === item.id);
-         if(currentProd) batch.update(doc(db, 'products', item.id), { stock: currentProd.stock + item.qty });
-      });
-      batch.update(doc(db, 'purchase_orders', order.id), { status: 'Received' });
-      await batch.commit();
-      await logAudit(user, 'RECEIVE_PO', `Received PO ${order.id}`);
-   };
-
-   return (
-      <div className="space-y-6">
-         <div className="flex gap-4 border-b border-slate-200 dark:border-slate-700">
-            <button onClick={() => setActiveTab('orders')} className={`pb-2 px-1 text-sm font-medium ${activeTab === 'orders' ? 'text-purple-600 border-b-2 border-purple-600' : 'text-slate-500'}`}>Purchase Orders</button>
-            <button onClick={() => setActiveTab('vendors')} className={`pb-2 px-1 text-sm font-medium ${activeTab === 'vendors' ? 'text-purple-600 border-b-2 border-purple-600' : 'text-slate-500'}`}>Vendors</button>
-         </div>
-         {activeTab === 'vendors' ? (
-            <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
-               <div className="flex justify-between mb-4"><h2 className="font-bold text-lg dark:text-white">Suppliers</h2><button onClick={() => setShowVendorModal(true)} className="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-purple-700">Add Vendor</button></div>
-               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">{vendors.map(v => (<div key={v.id} className="p-4 border border-slate-200 dark:border-slate-700 rounded-lg"><h3 className="font-bold dark:text-white">{v.name}</h3><p className="text-sm text-slate-500">{v.email}</p><p className="text-sm text-slate-500">{v.phone}</p></div>))}</div>
-            </div>
-         ) : (
-            <div className="space-y-4">
-               <div className="flex justify-between items-center"><h2 className="text-xl font-bold dark:text-white">Orders</h2><button onClick={() => setShowPOModal(true)} className="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-purple-700">+ New Order</button></div>
-               <div className="space-y-3">{orders.map(order => (<div key={order.id} className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700 flex justify-between items-center"><div><div className="flex items-center gap-2"><span className="font-bold dark:text-white">{order.vendorName}</span><span className={`text-xs px-2 py-0.5 rounded-full ${order.status === 'Received' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{order.status}</span></div><p className="text-xs text-slate-500 mt-1">{new Date(order.date).toLocaleDateString()} • {order.items.length} Items</p></div><div className="flex items-center gap-4"><span className="font-bold dark:text-white">₹{order.total}</span>{order.status === 'Ordered' && (<button onClick={() => handleReceivePO(order)} className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg"><CheckCircle className="w-5 h-5" /></button>)}</div></div>))}</div>
-            </div>
-         )}
-         {showVendorModal && (<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"><div className="bg-white dark:bg-slate-800 p-6 rounded-xl w-full max-w-md"><h3 className="font-bold mb-4 dark:text-white">Add Vendor</h3><input className="w-full mb-3 p-2 border rounded dark:bg-slate-700 dark:text-white" placeholder="Name" value={newVendor.name} onChange={e => setNewVendor({...newVendor, name: e.target.value})} /><div className="flex gap-2"><button onClick={() => setShowVendorModal(false)} className="flex-1 py-2 text-slate-500">Cancel</button><button onClick={handleAddVendor} className="flex-1 py-2 bg-purple-600 text-white rounded-lg">Save</button></div></div></div>)}
-         {showPOModal && (<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"><div className="bg-white dark:bg-slate-800 p-6 rounded-xl w-full max-w-lg"><h3 className="font-bold mb-4 dark:text-white">Create Purchase Order</h3><select className="w-full mb-4 p-2 border rounded dark:bg-slate-700 dark:text-white" value={newPO.vendorId} onChange={e => setNewPO({...newPO, vendorId: e.target.value})}><option value="">Select Vendor</option>{vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}</select><div className="bg-slate-50 dark:bg-slate-900 p-3 rounded-lg mb-4"><div className="flex gap-2 mb-2"><select className="flex-1 p-2 border rounded text-sm dark:bg-slate-700 dark:text-white" value={poItem.productId} onChange={e => setPOItem({...poItem, productId: e.target.value})}><option value="">Select Item</option>{products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select><input type="number" className="w-20 p-2 border rounded text-sm dark:bg-slate-700 dark:text-white" value={poItem.qty} onChange={e => setPOItem({...poItem, qty: Number(e.target.value)})} /><button onClick={() => { if(poItem.productId) { const p = products.find(prod => prod.id === poItem.productId); if(p) setNewPO({...newPO, items: [...newPO.items, {...p, qty: poItem.qty}]}); } }} className="px-3 bg-slate-200 dark:bg-slate-600 rounded">+</button></div><ul className="text-sm space-y-1">{newPO.items.map((item, idx) => (<li key={idx} className="flex justify-between text-slate-600 dark:text-slate-400"><span>{item.name}</span><span>x{item.qty}</span></li>))}</ul></div><div className="flex gap-2"><button onClick={() => setShowPOModal(false)} className="flex-1 py-2 text-slate-500">Cancel</button><button onClick={handleCreatePO} className="flex-1 py-2 bg-purple-600 text-white rounded-lg">Place Order</button></div></div></div>)}
-      </div>
-   );
-};
-
-// 5. EXPENSES VIEW (RESTORED)
-const ExpensesView = () => {
-   const { user } = useContext(AuthContext);
-   const { data: expenses } = useFirestoreCollection<Expense>('expenses', 'date');
-   const [showModal, setShowModal] = useState(false);
-   const [newExp, setNewExp] = useState({ description: '', amount: '', category: 'Operational', paymentMethod: 'Cash' });
-
-   const handleAdd = async () => {
-      if(!newExp.description || !newExp.amount) return;
-      await addDoc(collection(db, 'expenses'), { ...newExp, amount: Number(newExp.amount), date: new Date().toISOString(), recordedBy: user?.email });
-      setShowModal(false); setNewExp({ description: '', amount: '', category: 'Operational', paymentMethod: 'Cash' });
-   };
-
-   return (
-      <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
-         <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center bg-red-50/30 dark:bg-red-900/10"><h2 className="text-red-800 dark:text-red-300 font-bold text-lg flex items-center gap-2"><Wallet className="w-5 h-5" /> Expenses</h2><button onClick={() => setShowModal(true)} className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700 shadow-sm"><Plus className="w-4 h-4" /> New Expense</button></div>
-         <div className="overflow-x-auto"><table className="w-full text-left text-sm text-slate-600 dark:text-slate-400"><thead className="bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white font-semibold border-b border-slate-200 dark:border-slate-700"><tr><th className="px-6 py-3">Date</th><th className="px-6 py-3">Description</th><th className="px-6 py-3">Category</th><th className="px-6 py-3 text-right">Amount</th></tr></thead><tbody className="divide-y divide-slate-100 dark:divide-slate-700">{expenses.map(exp => (<tr key={exp.id} className="hover:bg-slate-50 dark:hover:bg-slate-700"><td className="px-6 py-3">{new Date(exp.date).toLocaleDateString()}</td><td className="px-6 py-3 font-medium text-slate-900 dark:text-white">{exp.description}</td><td className="px-6 py-3"><span className="px-2 py-1 bg-slate-100 dark:bg-slate-700 rounded-full text-xs">{exp.category}</span></td><td className="px-6 py-3 text-right font-medium text-red-600 dark:text-red-400">-₹{exp.amount}</td></tr>))}</tbody></table></div>
-         {showModal && (<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"><div className="bg-white dark:bg-slate-800 p-6 rounded-xl w-full max-w-md"><h3 className="text-lg font-bold mb-4 dark:text-white">Record Expense</h3><div className="space-y-3"><input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white" placeholder="Description" value={newExp.description} onChange={e => setNewExp({...newExp, description: e.target.value})} /><input type="number" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white" placeholder="Amount" value={newExp.amount} onChange={e => setNewExp({...newExp, amount: e.target.value})} /></div><div className="flex gap-3 mt-6"><button onClick={() => setShowModal(false)} className="flex-1 py-2 text-slate-500">Cancel</button><button onClick={handleAdd} className="flex-1 py-2 bg-red-600 text-white rounded-lg">Save</button></div></div></div>)}
-      </div>
-   );
-};
-
-// 6. CUSTOMERS VIEW (RESTORED)
 const CustomersView = () => {
-   const { data: customers } = useFirestoreCollection<Customer>('customers', 'name');
-   const [showModal, setShowModal] = useState(false);
-   const [newCust, setNewCust] = useState({ name: '', phone: '', email: '', address: '' });
-
-   const handleAdd = async () => {
-      if(!newCust.name) return;
-      await addDoc(collection(db, 'customers'), { ...newCust, totalSpent: 0, lastVisit: new Date().toISOString() });
-      setShowModal(false); setNewCust({ name: '', phone: '', email: '', address: '' });
-   };
-
-   return (
-      <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
-         <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center bg-blue-50/30 dark:bg-blue-900/10"><h2 className="text-blue-800 dark:text-blue-300 font-bold text-lg flex items-center gap-2"><Users className="w-5 h-5" /> Customers</h2><button onClick={() => setShowModal(true)} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700"><UserPlus className="w-4 h-4" /> Add Customer</button></div>
-         <div className="overflow-x-auto"><table className="w-full text-left text-sm text-slate-600 dark:text-slate-400"><thead className="bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white font-semibold border-b border-slate-200 dark:border-slate-700"><tr><th className="px-6 py-3">Name</th><th className="px-6 py-3">Contact</th><th className="px-6 py-3">Total Spent</th></tr></thead><tbody className="divide-y divide-slate-100 dark:divide-slate-700">{customers.map(c => (<tr key={c.id} className="hover:bg-slate-50 dark:hover:bg-slate-700"><td className="px-6 py-3 font-medium text-slate-900 dark:text-white">{c.name}</td><td className="px-6 py-3">{c.phone}</td><td className="px-6 py-3 font-bold text-emerald-600">₹{c.totalSpent}</td></tr>))}</tbody></table></div>
-         {showModal && (<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"><div className="bg-white dark:bg-slate-800 p-6 rounded-xl w-full max-w-md"><h3 className="text-lg font-bold mb-4 dark:text-white">New Customer</h3><div className="space-y-3"><input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white" placeholder="Name" value={newCust.name} onChange={e => setNewCust({...newCust, name: e.target.value})} /><input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white" placeholder="Phone" value={newCust.phone} onChange={e => setNewCust({...newCust, phone: e.target.value})} /></div><div className="flex gap-3 mt-6"><button onClick={() => setShowModal(false)} className="flex-1 py-2 text-slate-500">Cancel</button><button onClick={handleAdd} className="flex-1 py-2 bg-blue-600 text-white rounded-lg">Save</button></div></div></div>)}
-      </div>
-   );
-};
-
-// 7. SALES ORDERS VIEW (RESTORED)
-const SalesOrdersView = () => {
-   const { data: sales } = useFirestoreCollection<Sale>('sales', 'createdAt');
-   return (
-      <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
-         <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center"><h2 className="text-slate-800 dark:text-white font-bold text-lg flex items-center gap-2"><History className="w-5 h-5" /> Sales History</h2></div>
-         <div className="overflow-x-auto"><table className="w-full text-left text-sm text-slate-600 dark:text-slate-400"><thead className="bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white font-semibold border-b border-slate-200 dark:border-slate-700"><tr><th className="px-6 py-3">Date</th><th className="px-6 py-3">Customer</th><th className="px-6 py-3 text-right">Amount</th></tr></thead><tbody className="divide-y divide-slate-100 dark:divide-slate-700">{sales.map(s => (<tr key={s.id} className="hover:bg-slate-50 dark:hover:bg-slate-700"><td className="px-6 py-3">{new Date(s.date).toLocaleDateString()}</td><td className="px-6 py-3">{s.customer}</td><td className="px-6 py-3 text-right font-bold text-emerald-600">₹{s.amount}</td></tr>))}</tbody></table></div>
-      </div>
-   );
-};
-
-// 8. DOCUMENTS VIEW (Updated)
-const DocumentsView = () => {
-   return (
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-140px)]">
-         <div className="lg:col-span-2 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 flex flex-col">
-             <div className="p-4 border-b dark:border-slate-700 flex justify-between items-center">
-                <h3 className="font-bold text-lg dark:text-white flex items-center gap-2"><FileText className="w-5 h-5" /> Inbox</h3>
-                <div className="flex gap-2">
-                   <button className="p-2 text-slate-500 hover:bg-slate-100 rounded"><RefreshCw className="w-4 h-4"/></button>
-                   <button className="p-2 text-slate-500 hover:bg-slate-100 rounded"><Filter className="w-4 h-4"/></button>
-                </div>
-             </div>
-             <div className="flex-1 overflow-y-auto p-4">
-                <div className="flex flex-col items-center justify-center h-64 text-slate-400 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900/50">
-                   <Scan className="w-12 h-12 mb-2 opacity-50" />
-                   <p>Drag & Drop documents here</p>
-                   <p className="text-xs">or click to upload for Auto-Scan</p>
-                </div>
-                <div className="mt-4 space-y-2">
-                   {[1,2,3].map(i => (
-                      <div key={i} className="flex items-center p-3 bg-slate-50 dark:bg-slate-700/50 rounded-lg border border-slate-100 dark:border-slate-700">
-                         <FileText className="w-8 h-8 text-blue-500 mr-3" />
-                         <div className="flex-1">
-                            <p className="font-medium text-sm dark:text-white">Invoice_Oct_{i}.pdf</p>
-                            <p className="text-xs text-slate-500">Uploaded just now • 2.4 MB</p>
-                         </div>
-                         <button className="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded">Process</button>
-                      </div>
-                   ))}
-                </div>
-             </div>
-         </div>
-         <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
-            <h3 className="font-bold mb-4 dark:text-white">Document Autoscan</h3>
-            <div className="bg-slate-900 rounded-lg p-4 h-64 flex items-center justify-center mb-4 relative overflow-hidden">
-               <div className="absolute inset-0 bg-gradient-to-b from-transparent via-purple-500/10 to-transparent animate-scan" style={{ top: '50%', height: '2px', boxShadow: '0 0 20px #a855f7' }}></div>
-               <p className="text-slate-400 text-sm">Select a document to preview</p>
+  const { data: customers } = useCollection<Customer>('customers', 'name');
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 animate-in fade-in duration-500">
+       <div className="bg-white dark:bg-slate-800 p-8 rounded-[32px] border-2 border-dashed border-slate-200 dark:border-slate-700 flex flex-col items-center justify-center text-center group cursor-pointer hover:border-indigo-500 transition-colors">
+          <div className="w-16 h-16 bg-slate-50 dark:bg-slate-900 rounded-full flex items-center justify-center mb-6 group-hover:bg-indigo-50 transition-colors"><UserPlus className="w-8 h-8 text-slate-400 group-hover:text-indigo-600 transition-colors" /></div>
+          <h4 className="font-black dark:text-white mb-2">Register New Member</h4>
+          <p className="text-xs text-slate-500">Add customers to track loyalty points and purchase history.</p>
+       </div>
+       {customers.map(c => (
+         <div key={c.id} className="bg-white dark:bg-slate-800 p-8 rounded-[32px] shadow-sm border dark:border-slate-700 hover:shadow-xl transition-all relative overflow-hidden group">
+            <div className="absolute top-0 left-0 w-1 h-full bg-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+            <div className="flex justify-between items-start mb-6">
+               <div className="w-14 h-14 bg-indigo-50 dark:bg-slate-900 text-indigo-600 rounded-2xl flex items-center justify-center font-black text-xl">{c.name[0]}</div>
+               <button className="p-2 hover:bg-slate-50 dark:hover:bg-slate-700 rounded-xl transition-colors"><MoreVertical className="w-4 h-4 text-slate-400" /></button>
             </div>
-            <div className="space-y-3">
-               <div className="p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-100 dark:border-purple-800">
-                  <h4 className="text-xs font-bold text-purple-800 dark:text-purple-300 uppercase mb-1">Extracted Data</h4>
-                  <p className="text-xs text-slate-600 dark:text-slate-400">Waiting for selection...</p>
+            <h4 className="font-black dark:text-white text-lg mb-1">{c.name}</h4>
+            <div className="space-y-2 mb-8">
+               <p className="text-xs text-slate-500 flex items-center gap-2 font-medium"><Phone className="w-3 h-3" /> {c.phone}</p>
+               <p className="text-xs text-slate-500 flex items-center gap-2 font-medium"><Mail className="w-3 h-3" /> {c.email}</p>
+            </div>
+            <div className="pt-6 border-t dark:border-slate-700 flex justify-between items-center">
+               <div>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Total Spending</p>
+                  <p className="font-black text-indigo-600 dark:text-indigo-400">₹{(c.totalSpent || 0).toLocaleString()}</p>
                </div>
-               <button className="w-full py-2 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded text-sm font-medium">Create Transaction</button>
+               <div className="text-right">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Tier</p>
+                  <p className="text-[10px] font-black uppercase tracking-widest px-2 py-1 bg-amber-100 text-amber-600 rounded-lg">Gold</p>
+               </div>
             </div>
          </div>
-      </div>
-   );
+       ))}
+    </div>
+  );
 };
 
-// 9. INTEGRATIONS VIEW
-const IntegrationsView = () => {
-   const integrations = [
-      { name: 'Shopify', icon: ShoppingCart, color: 'text-green-600', bg: 'bg-green-50', status: 'Connected' },
-      { name: 'Instagram Shop', icon: Instagram, color: 'text-pink-600', bg: 'bg-pink-50', status: 'Connect' },
-      { name: 'Facebook Market', icon: Facebook, color: 'text-blue-600', bg: 'bg-blue-50', status: 'Connect' },
-      { name: 'WooCommerce', icon: Store, color: 'text-purple-600', bg: 'bg-purple-50', status: 'Connect' }
-   ];
+const ExpensesView = () => {
+  const { data: expenses } = useCollection<Expense>('expenses', 'date');
+  return (
+    <div className="space-y-8 animate-in fade-in duration-500">
+       <div className="bg-white dark:bg-slate-800 p-10 rounded-[40px] border dark:border-slate-700 shadow-sm flex flex-col lg:flex-row justify-between items-start lg:items-center gap-10">
+          <div className="flex-1">
+             <h2 className="text-3xl font-black dark:text-white tracking-tight mb-2">Financial Outflow</h2>
+             <p className="text-sm font-medium text-slate-500">Track operating costs, payroll, and maintenance expenses.</p>
+          </div>
+          <div className="flex gap-4">
+             <div className="p-6 bg-slate-50 dark:bg-slate-900 rounded-3xl text-center min-w-[150px]">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-2">Month to Date</p>
+                <p className="text-2xl font-black text-red-600">₹{expenses.reduce((s,i) => s + i.amount, 0).toLocaleString()}</p>
+             </div>
+             <button className="flex items-center gap-3 bg-indigo-600 text-white px-8 py-4 rounded-3xl text-[10px] font-black uppercase tracking-[0.2em] hover:bg-indigo-700 shadow-2xl shadow-indigo-500/30 transition-all active:scale-95">
+                <Plus className="w-5 h-5" /> Log Expense
+             </button>
+          </div>
+       </div>
 
-   return (
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-         {integrations.map(app => (
-            <div key={app.name} className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-slate-200 dark:border-slate-700 flex flex-col items-center text-center">
-               <div className={`p-4 rounded-full ${app.bg} ${app.color} mb-4`}>
-                  <app.icon className="w-8 h-8" />
-               </div>
-               <h3 className="font-bold text-lg dark:text-white mb-2">{app.name}</h3>
-               <p className="text-xs text-slate-500 mb-6">Sync products, inventory and orders automatically.</p>
-               <button className={`px-6 py-2 rounded-full text-sm font-medium ${app.status === 'Connected' ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-slate-900 text-white hover:bg-slate-800'}`}>
-                  {app.status}
-               </button>
-            </div>
-         ))}
-      </div>
-   );
+       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          <div className="lg:col-span-8 bg-white dark:bg-slate-800 rounded-[40px] border dark:border-slate-700 overflow-hidden shadow-sm">
+             <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm whitespace-nowrap">
+                  <thead className="bg-slate-50 dark:bg-slate-900 text-slate-500 font-bold uppercase tracking-widest text-[10px] border-b dark:border-slate-700">
+                    <tr>
+                      <th className="px-8 py-6">Date</th>
+                      <th className="px-8 py-6">Description</th>
+                      <th className="px-8 py-6">Category</th>
+                      <th className="px-8 py-6 text-right">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y dark:divide-slate-700">
+                    {expenses.map(ex => (
+                      <tr key={ex.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
+                        <td className="px-8 py-6 text-xs font-bold text-slate-500">{new Date(ex.date).toLocaleDateString()}</td>
+                        <td className="px-8 py-6 font-black dark:text-white">{ex.description}</td>
+                        <td className="px-8 py-6">
+                           <span className="px-3 py-1 bg-slate-100 dark:bg-slate-900 rounded-lg text-[10px] font-black uppercase tracking-widest text-slate-400">{ex.category}</span>
+                        </td>
+                        <td className="px-8 py-6 text-right font-black text-red-600">₹{ex.amount.toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+             </div>
+          </div>
+          <div className="lg:col-span-4 space-y-6">
+             <div className="bg-indigo-600 p-10 rounded-[40px] text-white shadow-2xl shadow-indigo-500/30">
+                <div className="flex justify-between items-start mb-8">
+                   <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center"><CreditCard className="w-7 h-7" /></div>
+                   <span className="text-[10px] font-black uppercase tracking-widest bg-white/20 px-3 py-1 rounded-full">Primary Account</span>
+                </div>
+                <p className="text-indigo-100 text-[10px] font-black uppercase tracking-[0.3em] mb-2">Available Balance</p>
+                <h3 className="text-4xl font-black mb-10">₹4,82,900.00</h3>
+                <div className="flex justify-between text-xs font-bold">
+                   <span>**** 4920</span>
+                   <span className="uppercase">Visa Business</span>
+                </div>
+             </div>
+          </div>
+       </div>
+    </div>
+  );
 };
 
-// 10. SETUP GRID DASHBOARD
+// --- Missing PurchasesView Component ---
+const PurchasesView = ({ products }: { products: Product[] }) => {
+  const { data: orders } = useCollection<PurchaseOrder>('purchaseOrders', 'date');
+  
+  return (
+    <div className="space-y-8 animate-in fade-in duration-500">
+       <div className="bg-white dark:bg-slate-800 p-10 rounded-[40px] border dark:border-slate-700 shadow-sm flex flex-col lg:flex-row justify-between items-start lg:items-center gap-10">
+          <div className="flex-1">
+             <h2 className="text-3xl font-black dark:text-white tracking-tight mb-2">Procurement & Sourcing</h2>
+             <p className="text-sm font-medium text-slate-500">Manage vendor shipments and bulk inventory replenishment.</p>
+          </div>
+          <div className="flex gap-4">
+             <button className="flex items-center gap-3 bg-indigo-600 text-white px-8 py-4 rounded-3xl text-[10px] font-black uppercase tracking-[0.2em] hover:bg-indigo-700 shadow-2xl shadow-indigo-500/30 transition-all active:scale-95">
+                <Plus className="w-5 h-5" /> Create Purchase Order
+             </button>
+          </div>
+       </div>
+
+       <div className="bg-white dark:bg-slate-800 rounded-[40px] border dark:border-slate-700 overflow-hidden shadow-sm">
+          <div className="overflow-x-auto">
+             <table className="w-full text-left text-sm whitespace-nowrap">
+               <thead className="bg-slate-50 dark:bg-slate-900 text-slate-500 font-bold uppercase tracking-widest text-[10px] border-b dark:border-slate-700">
+                 <tr>
+                   <th className="px-8 py-6">ID</th>
+                   <th className="px-8 py-6">Vendor Name</th>
+                   <th className="px-8 py-6">Status</th>
+                   <th className="px-8 py-6">Creation Date</th>
+                   <th className="px-8 py-6 text-right">Estimated Total</th>
+                   <th className="px-8 py-6 text-center">Action</th>
+                 </tr>
+               </thead>
+               <tbody className="divide-y dark:divide-slate-700">
+                 {orders.length === 0 ? (
+                   <tr>
+                     <td colSpan={6} className="px-8 py-20 text-center">
+                       <div className="flex flex-col items-center gap-4 opacity-20">
+                         <Truck className="w-16 h-16" />
+                         <p className="text-[10px] font-black uppercase tracking-widest">No active procurement logs</p>
+                       </div>
+                     </td>
+                   </tr>
+                 ) : (
+                   orders.map(order => (
+                     <tr key={order.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
+                       <td className="px-8 py-6 font-mono font-bold text-xs">#{order.id.slice(0, 8).toUpperCase()}</td>
+                       <td className="px-8 py-6 font-black dark:text-white">{order.vendorName}</td>
+                       <td className="px-8 py-6">
+                          <span className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest ${order.status === 'Received' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}>
+                            {order.status}
+                          </span>
+                       </td>
+                       <td className="px-8 py-6 text-xs font-bold text-slate-500">{new Date(order.date).toLocaleDateString()}</td>
+                       <td className="px-8 py-6 text-right font-black text-indigo-600 dark:text-indigo-400">₹{order.total.toLocaleString()}</td>
+                       <td className="px-8 py-6 text-center">
+                          <button className="p-2 hover:bg-white dark:hover:bg-slate-700 rounded-xl transition-colors"><MoreVertical className="w-4 h-4 text-slate-400" /></button>
+                       </td>
+                     </tr>
+                   ))
+                 )}
+               </tbody>
+             </table>
+          </div>
+       </div>
+    </div>
+  );
+};
+
 const SetupView = () => {
-   const { user } = useContext(AuthContext);
-   const sections = [
-      { title: 'General Settings', icon: Settings, desc: 'Company profile, currency, timezone' },
-      { title: 'Users & Roles', icon: Users, desc: 'Manage access and permissions' },
-      { title: 'Data Administration', icon: Database, desc: 'Backup, restore, and import data' },
-      { title: 'Security', icon: Lock, desc: 'Password policy, 2FA, session logs' },
-      { title: 'Automation', icon: Zap, desc: 'Workflows and email triggers' },
-      { title: 'Notifications', icon: Bell, desc: 'Alert preferences and channels' }
-   ];
-
-   return (
-      <div className="space-y-8">
-         <h2 className="text-2xl font-bold dark:text-white">Administration</h2>
-         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {sections.map(s => (
-               <div key={s.title} className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-slate-200 dark:border-slate-700 hover:shadow-md transition-shadow cursor-pointer group">
-                  <div className="flex items-center gap-4 mb-3">
-                     <div className="p-3 bg-purple-50 dark:bg-purple-900/20 text-purple-600 rounded-lg group-hover:scale-110 transition-transform"><s.icon className="w-6 h-6" /></div>
-                     <h3 className="font-bold text-lg dark:text-white">{s.title}</h3>
-                  </div>
-                  <p className="text-sm text-slate-500 dark:text-slate-400">{s.desc}</p>
-               </div>
-            ))}
-         </div>
-      </div>
-   );
-};
-
-// 11. DASHBOARD VIEW (RESTORED)
-const DashboardView = ({ data }: { data: any }) => {
-   const { products, sales } = data;
-   const totalRev = sales.reduce((s:any, i:any) => s + i.amount, 0);
-   const lowStock = products.filter((p:any) => p.stock < 5).length;
-   
-   // Chart Data
-   const chartData = useMemo(() => {
-     const map = new Map();
-     sales.slice(-50).forEach((s:any) => {
-        const d = new Date(s.date).toLocaleDateString(undefined, {weekday:'short'});
-        map.set(d, (map.get(d) || 0) + s.amount);
-     });
-     return Array.from(map.entries()).map(([name, value]) => ({ name, value })).slice(-7);
-   }, [sales]);
-
-   return (
-      <div className="space-y-6">
-         <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Dashboard</h1>
-         {lowStock > 0 && (
-            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-4 rounded-xl flex items-center gap-3 text-red-700 dark:text-red-300">
-               <AlertCircle className="w-5 h-5" />
-               <span className="font-medium">Warning: {lowStock} items are low on stock!</span>
-            </div>
-         )}
-         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-slate-100 dark:border-slate-700 shadow-sm">
-               <div className="flex justify-between mb-4"><div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-500"><DollarSign className="w-6 h-6" /></div></div>
-               <p className="text-slate-500 text-sm font-medium">Total Revenue</p><p className="text-2xl font-bold dark:text-white mt-1">₹{totalRev.toLocaleString()}</p>
-            </div>
-            <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-slate-100 dark:border-slate-700 shadow-sm">
-               <div className="flex justify-between mb-4"><div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-900/20 text-blue-500"><Package className="w-6 h-6" /></div></div>
-               <p className="text-slate-500 text-sm font-medium">Total Products</p><p className="text-2xl font-bold dark:text-white mt-1">{products.length}</p>
-            </div>
-            <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-slate-100 dark:border-slate-700 shadow-sm">
-               <div className="flex justify-between mb-4"><div className="p-2 rounded-lg bg-purple-50 dark:bg-purple-900/20 text-purple-500"><TrendingUp className="w-6 h-6" /></div></div>
-               <p className="text-slate-500 text-sm font-medium">Total Sales</p><p className="text-2xl font-bold dark:text-white mt-1">{sales.length}</p>
-            </div>
-         </div>
-         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border dark:border-slate-700 shadow-sm h-80">
-               <h3 className="font-bold text-slate-800 dark:text-white mb-4">Sales Trend</h3>
-               <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={chartData}>
-                     <defs><linearGradient id="colorVal" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#10b981" stopOpacity={0.8}/><stop offset="95%" stopColor="#10b981" stopOpacity={0}/></linearGradient></defs>
-                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#374151" opacity={0.2} />
-                     <XAxis dataKey="name" stroke="#9ca3af" fontSize={12} tickLine={false} axisLine={false} />
-                     <YAxis stroke="#9ca3af" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(v) => `₹${v}`} />
-                     <RechartsTooltip contentStyle={{ backgroundColor: '#1f2937', borderColor: '#374151', color: '#f3f4f6' }} />
-                     <Area type="monotone" dataKey="value" stroke="#10b981" fillOpacity={1} fill="url(#colorVal)" />
-                  </AreaChart>
-               </ResponsiveContainer>
-            </div>
-            <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border dark:border-slate-700 shadow-sm h-80 flex flex-col items-center justify-center">
-                <PieChartIcon className="w-16 h-16 text-slate-300 mb-4" />
-                <p className="text-slate-500">Category analytics pending data.</p>
-            </div>
-         </div>
-      </div>
-   );
-};
-
-// --- AI ASSISTANT COMPONENT (FIXED) ---
-
-const AiAssistant = ({ dataContext }: { dataContext: any }) => {
-   const [open, setOpen] = useState(false);
-   const [messages, setMessages] = useState<{role: 'user'|'model', text: string}[]>([{role: 'model', text: 'Hi! I am Inara AI. Ask me about your sales, inventory, or draft a document.'}]);
-   const [input, setInput] = useState('');
-   const [thinking, setThinking] = useState(false);
-   const scrollRef = useRef<HTMLDivElement>(null);
-
-   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
-
-   const handleSend = async () => {
-      if(!input.trim()) return;
-      const userMsg = input;
-      setMessages(p => [...p, { role: 'user', text: userMsg }]);
-      setInput('');
-      setThinking(true);
-
-      try {
-         // Construct Context
-         const context = `
-            You are Inara AI, an ERP assistant. 
-            Current Data Context:
-            - Total Products: ${dataContext.products.length}
-            - Low Stock Items: ${dataContext.products.filter((p:any) => p.stock < 5).length}
-            - Recent Sales: ${dataContext.sales.length} (Last 7 days)
-            - Total Revenue: ₹${dataContext.sales.reduce((s:any, i:any) => s + i.amount, 0)}
-            
-            Answer the user's question concisely based on this data or general business knowledge.
-         `;
-         
-         const response = await genAI.models.generateContent({
-             model: "gemini-3-flash-preview",
-             contents: [
-                 {
-                     role: 'user',
-                     parts: [{ text: context + "\n\nUser Question: " + userMsg }]
-                 }
-             ]
-         });
-         
-         setMessages(p => [...p, { role: 'model', text: response.text || "I couldn't generate a response." }]);
-      } catch (e) {
-         console.error(e);
-         setMessages(p => [...p, { role: 'model', text: "Sorry, I encountered an error connecting to the AI service." }]);
-      } finally {
-         setThinking(false);
-      }
-   };
-
-   return (
-      <>
-         <button onClick={() => setOpen(!open)} className="fixed bottom-6 right-6 z-50 w-14 h-14 bg-gradient-to-r from-purple-600 to-indigo-600 rounded-full shadow-2xl flex items-center justify-center text-white hover:scale-105 transition-transform">
-            {open ? <X className="w-6 h-6" /> : <Sparkles className="w-6 h-6 animate-pulse" />}
-         </button>
-
-         {open && (
-            <div className="fixed bottom-24 right-6 z-50 w-80 md:w-96 h-[500px] bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden animate-in slide-in-from-bottom-10 fade-in duration-300">
-               <div className="p-4 bg-gradient-to-r from-purple-600 to-indigo-600 text-white flex justify-between items-center">
-                  <div className="flex items-center gap-2">
-                     <Bot className="w-5 h-5" />
-                     <span className="font-bold">Inara Assistant</span>
-                  </div>
-                  <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">Gemini 3.0</span>
-               </div>
-               <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50 dark:bg-slate-900/50">
-                  {messages.map((m, i) => (
-                     <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-[80%] p-3 rounded-2xl text-sm ${m.role === 'user' ? 'bg-purple-600 text-white rounded-br-none' : 'bg-white dark:bg-slate-800 border dark:border-slate-700 dark:text-slate-200 rounded-bl-none shadow-sm'}`}>
-                           {m.text}
-                        </div>
-                     </div>
-                  ))}
-                  {thinking && <div className="flex justify-start"><div className="bg-white dark:bg-slate-800 p-3 rounded-2xl rounded-bl-none shadow-sm"><Loader2 className="w-4 h-4 animate-spin text-purple-600" /></div></div>}
-                  <div ref={scrollRef} />
-               </div>
-               <div className="p-3 bg-white dark:bg-slate-800 border-t dark:border-slate-700 flex gap-2">
-                  <input 
-                     className="flex-1 bg-slate-100 dark:bg-slate-700 border-0 rounded-full px-4 text-sm focus:ring-2 focus:ring-purple-500 dark:text-white"
-                     placeholder="Ask anything..."
-                     value={input}
-                     onChange={e => setInput(e.target.value)}
-                     onKeyDown={e => e.key === 'Enter' && handleSend()}
-                  />
-                  <button onClick={handleSend} className="p-2 bg-purple-600 text-white rounded-full hover:bg-purple-700"><Send className="w-4 h-4" /></button>
-               </div>
-            </div>
-         )}
-      </>
-   );
-};
-
-// --- APP CONTENT ---
-
-const AppContent = () => {
-  const { user, logout } = useContext(AuthContext);
-  const { isDarkMode, toggleTheme } = useContext(ThemeContext);
-  
-  // Data Hooks
-  const { data: products } = useFirestoreCollection<Product>('products');
-  const { data: sales } = useFirestoreCollection<Sale>('sales');
-  
-  const [currentView, setCurrentView] = useState('dashboard');
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-
-  // Grouped Navigation
-  const navGroups = [
-     {
-        title: 'Main',
-        items: [
-           { id: 'dashboard', label: 'Dashboard', icon: LayoutGrid },
-           { id: 'documents', label: 'Documents', icon: FileText },
-        ]
-     },
-     {
-        title: 'Inventory',
-        items: [
-           { id: 'items_list', label: 'Product List', icon: Package },
-           { id: 'inventory_adj', label: 'Adjustments', icon: ClipboardList },
-        ]
-     },
-     {
-        title: 'Sales',
-        items: [
-           { id: 'billing', label: 'POS / Billing', icon: ShoppingCart },
-           { id: 'sales_orders', label: 'Sales History', icon: History },
-           { id: 'customers', label: 'Customers', icon: Users },
-        ]
-     },
-     {
-        title: 'Purchases',
-        items: [
-           { id: 'purchases', label: 'Orders & Vendors', icon: Truck },
-           { id: 'expenses', label: 'Expenses', icon: Wallet },
-        ]
-     },
-     {
-        title: 'System',
-        items: [
-           { id: 'integrations', label: 'Integrations', icon: Layers },
-           { id: 'settings', label: 'Settings', icon: Settings },
-        ]
-     }
+  const sections = [
+    { label: 'Store Information', desc: 'Manage branch names & basic details', icon: Building2, color: 'text-indigo-500', bg: 'bg-indigo-50' },
+    { label: 'System Security', desc: 'Roles, permissions & access logs', icon: Shield, color: 'text-red-500', bg: 'bg-red-50' },
+    { label: 'Alerts & Notifications', desc: 'Set stock threshold alerts', icon: Bell, color: 'text-amber-500', bg: 'bg-amber-50' },
+    { label: 'Business Automation', desc: 'Webhooks & automatic PO generation', icon: Zap, color: 'text-purple-500', bg: 'bg-purple-50' },
+    { label: 'ERP Extensions', desc: 'Shopify, Amazon & GST integrations', icon: Layers, color: 'text-emerald-500', bg: 'bg-emerald-50' },
+    { label: 'Data Warehouse', desc: 'Full cloud backups & exports', icon: Database, color: 'text-blue-500', bg: 'bg-blue-50' },
   ];
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8 animate-in fade-in duration-500">
+      {sections.map(s => (
+        <div key={s.label} className="bg-white dark:bg-slate-800 p-10 rounded-[48px] border dark:border-slate-700 flex flex-col items-center text-center cursor-pointer hover:shadow-2xl hover:-translate-y-2 transition-all group overflow-hidden relative">
+          <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity"><s.icon className="w-32 h-32" /></div>
+          <div className={`p-8 ${s.bg} dark:bg-opacity-10 ${s.color} rounded-[32px] mb-8 group-hover:scale-110 transition-transform shadow-sm`}><s.icon className="w-12 h-12" /></div>
+          <h4 className="font-black dark:text-white text-xl tracking-tight">{s.label}</h4>
+          <p className="text-xs font-medium text-slate-500 mt-3 leading-relaxed max-w-[200px]">{s.desc}</p>
+          <div className="mt-10 flex items-center gap-3 text-indigo-600 dark:text-indigo-400 font-black text-[10px] uppercase tracking-[0.2em] opacity-0 group-hover:opacity-100 transition-all translate-y-4 group-hover:translate-y-0">
+            Open Configuration <ArrowUpRight className="w-4 h-4" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
 
-  const renderView = () => {
-     switch(currentView) {
-        case 'dashboard': return <DashboardView data={{ products, sales }} />;
-        case 'items_list': return <ItemsView products={products} />;
-        case 'inventory_adj': return <InventoryAdjustmentsView products={products} />;
-        case 'billing': return <BillingView products={products} />;
-        case 'documents': return <DocumentsView />;
-        case 'purchases': return <PurchasesView products={products} />;
-        case 'expenses': return <ExpensesView />;
-        case 'sales_orders': return <SalesOrdersView />;
-        case 'customers': return <CustomersView />;
-        case 'integrations': return <IntegrationsView />;
-        case 'settings': return <SetupView />;
-        default: return <ItemsView products={products} />;
-     }
+const DocumentsView = () => {
+  const [isScanning, setIsScanning] = useState(false);
+  const handleScan = () => {
+    setIsScanning(true);
+    setTimeout(() => setIsScanning(false), 3000);
   };
 
   return (
-    <div className="flex h-screen bg-slate-50 dark:bg-slate-900 transition-colors duration-200 font-sans">
-       {/* SIDEBAR */}
-      <aside className={`bg-[#1e1e2d] text-slate-300 flex flex-col h-screen border-r border-slate-800 transition-all duration-300 ${sidebarOpen ? 'w-64' : 'w-20'} no-print`}>
-        <div className="h-16 flex items-center px-4 border-b border-slate-800 shrink-0 bg-[#151521]">
-          <LayoutGrid className="w-6 h-6 text-purple-500" />
-          {sidebarOpen && <span className="ml-3 font-bold text-white tracking-wide text-lg">INARA</span>}
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 h-[calc(100vh-140px)] animate-in fade-in duration-500">
+      <div className="lg:col-span-8 bg-white dark:bg-slate-800 rounded-[48px] border dark:border-slate-700 flex flex-col overflow-hidden shadow-sm relative">
+        <div className="p-10 border-b dark:border-slate-700 flex justify-between items-center bg-slate-50/50 dark:bg-slate-900/50">
+          <div>
+            <h3 className="text-2xl font-black dark:text-white flex items-center gap-4"><History className="w-7 h-7 text-indigo-500" /> Cognitive Document Hub</h3>
+            <p className="text-xs font-medium text-slate-500 mt-1">Smart extraction of invoice data via Inara AI vision.</p>
+          </div>
+          <div className="flex gap-3">
+            <button className="p-4 hover:bg-white dark:hover:bg-slate-700 rounded-2xl transition-all shadow-sm"><RefreshCw className="w-5 h-5 text-slate-400" /></button>
+            <button className="p-4 hover:bg-white dark:hover:bg-slate-700 rounded-2xl transition-all shadow-sm"><Filter className="w-5 h-5 text-slate-400" /></button>
+          </div>
+        </div>
+        
+        <div className="flex-1 p-20 flex flex-col items-center justify-center border-[6px] border-dashed border-slate-50 dark:border-slate-900 m-12 rounded-[56px] bg-slate-50/50 dark:bg-slate-950/10 group relative transition-all overflow-hidden">
+          {isScanning && (
+            <div className="absolute inset-0 bg-indigo-600/5 flex items-center justify-center z-10 animate-pulse">
+               <div className="absolute top-0 left-0 w-full h-1 bg-indigo-500 animate-[scan_2s_linear_infinite]"></div>
+            </div>
+          )}
+          <div className="w-28 h-28 bg-indigo-600 text-white rounded-[32px] flex items-center justify-center mb-10 shadow-2xl shadow-indigo-500/40 group-hover:scale-110 transition-transform relative">
+             <Upload className="w-12 h-12" />
+          </div>
+          <h4 className="font-black text-3xl dark:text-white tracking-tight">AI Vision Engine</h4>
+          <p className="text-slate-500 mt-5 text-center max-w-sm leading-relaxed font-medium">Upload physical purchase bills or PDF invoices. We'll automatically identify items and update stock.</p>
+          <button onClick={handleScan} className="mt-12 px-12 py-5 bg-indigo-600 text-white rounded-[24px] font-black shadow-2xl shadow-indigo-500/30 hover:bg-indigo-700 transition-all active:scale-95 uppercase tracking-[0.2em] text-[10px]">Initialize Upload</button>
+        </div>
+      </div>
+      
+      <div className="lg:col-span-4 bg-white dark:bg-slate-800 rounded-[48px] border dark:border-slate-700 p-10 shadow-sm overflow-hidden flex flex-col">
+        <div className="flex items-center gap-4 mb-12"><Scan className="w-7 h-7 text-indigo-600" /><h4 className="font-black dark:text-white text-xl uppercase tracking-widest">Active Processing</h4></div>
+        <div className="space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+          {[1,2,3].map(i => (
+            <div key={i} className="p-8 bg-slate-50 dark:bg-slate-950/50 rounded-[32px] border dark:border-slate-700 relative group overflow-hidden">
+              <div className="absolute top-0 left-0 w-1.5 h-full bg-indigo-500 opacity-20 group-hover:opacity-100 transition-opacity"></div>
+              <div className="flex justify-between items-start mb-6">
+                 <div className="w-10 h-10 bg-white dark:bg-slate-800 rounded-xl flex items-center justify-center shadow-sm"><FileText className="w-5 h-5 text-slate-400" /></div>
+                 <div className="w-12 h-1 bg-slate-200 dark:bg-slate-700 rounded-full"></div>
+              </div>
+              <div className="h-5 bg-slate-200 dark:bg-slate-800 rounded-full w-3/4 mb-4 animate-pulse"></div>
+              <div className="h-3 bg-slate-100 dark:bg-slate-900 rounded-full w-1/2 animate-pulse"></div>
+              <div className="mt-8 flex justify-between items-center">
+                 <div className="px-3 py-1 bg-indigo-50 dark:bg-indigo-900/20 text-[10px] font-black text-indigo-600 uppercase tracking-widest rounded-lg">Processing</div>
+                 <Loader2 className="w-4 h-4 animate-spin text-indigo-500" />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const AiAssistant = ({ data }: { data: any }) => {
+  const [open, setOpen] = useState(false);
+  const [msg, setMsg] = useState<{r: 'ai'|'me', t: string}[]>([{r: 'ai', t: 'Greetings. I am Inara ERP Intelligence. I am ready to provide deep analysis on your sales metrics, stock velocity, and financial standing. How can I assist you today?'}]);
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  const handleSend = async () => {
+    if (!input.trim() || busy) return;
+    const txt = input;
+    setMsg(p => [...p, { r: 'me', t: txt }]);
+    setInput(''); setBusy(true);
+    try {
+      // Corrected Gemini API initialization to use named parameter and direct process.env.API_KEY
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const contextInfo = `The business currently has ${data.products.length} types of products in inventory and has recorded ${data.sales.length} sales transactions. Revenue stands at ₹${data.sales.reduce((s: number, i: any) => s + i.amount, 0).toLocaleString()}. Expenses total ₹${data.expenses.reduce((s: number, i: any) => s + i.amount, 0).toLocaleString()}. Profit is ₹${(data.sales.reduce((s: number, i: any) => s + i.amount, 0) - data.expenses.reduce((s: number, i: any) => s + i.amount, 0)).toLocaleString()}.`;
+      
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: `${contextInfo}\n\nUser Question: ${txt}`,
+        config: {
+            systemInstruction: "You are Inara ERP Intelligence, a senior corporate consultant for a high-end saree and textile brand. Analyze the provided ERP context and offer strategic, data-driven advice. Use professional business terminology. Keep it insightful yet concise.",
+        }
+      });
+      
+      // Access text directly as a property from the response
+      setMsg(p => [...p, { r: 'ai', t: response.text || "Connection to neural intelligence lost. Retrying..." }]);
+    } catch (e) {
+      console.error("AI Error:", e);
+      setMsg(p => [...p, { r: 'ai', t: "An error occurred while connecting to the AI brain. Please ensure your API access is active." }]);
+    } finally { setBusy(false); }
+  };
+
+  useEffect(() => {
+    if (open) ref.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [msg, open]);
+
+  return (
+    <>
+      <button onClick={() => setOpen(!open)} className="fixed bottom-12 right-12 z-[100] w-24 h-24 bg-indigo-600 rounded-[36px] shadow-[0_30px_60px_rgba(79,70,229,0.4)] flex items-center justify-center text-white hover:scale-110 active:scale-95 transition-all group overflow-hidden">
+        <div className="absolute inset-0 bg-white/10 group-hover:opacity-100 opacity-0 transition-opacity"></div>
+        <Sparkles className="w-10 h-10" />
+      </button>
+      {open && (
+        <div className="fixed bottom-40 right-12 z-[100] w-[calc(100vw-6rem)] sm:w-[500px] h-[700px] bg-white dark:bg-slate-900 rounded-[56px] shadow-[0_40px_120px_rgba(0,0,0,0.3)] border dark:border-slate-700 flex flex-col overflow-hidden animate-in slide-in-from-bottom-10 fade-in duration-500">
+          <div className="p-10 bg-indigo-600 text-white flex justify-between items-center font-black relative overflow-hidden">
+            <div className="absolute -right-4 -top-4 opacity-10"><Sparkles className="w-32 h-32" /></div>
+            <div className="flex items-center gap-5 relative">
+               <div className="w-14 h-14 bg-white/20 rounded-[24px] flex items-center justify-center"><Sparkles className="w-7 h-7" /></div>
+               <div>
+                  <h3 className="text-xl tracking-tight">Inara Intelligence</h3>
+                  <p className="text-[10px] text-indigo-200 font-black uppercase tracking-[0.3em]">Business Analytics Agent</p>
+               </div>
+            </div>
+            <button onClick={() => setOpen(false)} className="p-3 hover:bg-white/20 rounded-2xl transition-colors relative"><X className="w-6 h-6" /></button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-10 space-y-8 bg-slate-50/50 dark:bg-slate-950/50 custom-scrollbar">
+            {msg.map((m, i) => (
+              <div key={i} className={`flex ${m.r === 'me' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`p-6 rounded-[32px] text-sm leading-relaxed max-w-[90%] font-medium ${m.r === 'me' ? 'bg-indigo-600 text-white rounded-br-none shadow-xl shadow-indigo-500/10' : 'bg-white dark:bg-slate-800 dark:text-slate-100 border dark:border-slate-700 rounded-bl-none shadow-sm'}`}>
+                  {m.t}
+                </div>
+              </div>
+            ))}
+            {busy && (
+               <div className="flex justify-start">
+                  <div className="p-6 rounded-[32px] bg-white dark:bg-slate-800 border dark:border-slate-700 rounded-bl-none shadow-sm flex items-center gap-3">
+                     <Loader2 className="w-5 h-5 animate-spin text-indigo-500" />
+                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] animate-pulse">Computing Data...</span>
+                  </div>
+               </div>
+            )}
+            <div ref={ref} />
+          </div>
+          <div className="p-8 bg-white dark:bg-slate-800 border-t dark:border-slate-700 flex gap-4">
+            <input className="flex-1 px-8 py-5 bg-slate-50 dark:bg-slate-950 rounded-3xl border-none outline-none text-sm font-bold dark:text-white shadow-inner" placeholder="Ask about profits or inventory..." value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSend()} />
+            <button onClick={handleSend} className="w-16 h-16 bg-indigo-600 text-white rounded-[24px] shadow-2xl shadow-indigo-500/30 hover:bg-indigo-700 active:scale-95 transition-all flex items-center justify-center shrink-0"><Send className="w-6 h-6" /></button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
+const LoginView = () => {
+  const { login } = useContext(AuthContext);
+  const [email, setEmail] = useState('');
+  const [pass, setPass] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    try {
+      await login(email, pass);
+    } catch (err: any) {
+      setError("Authorization failed. Please check credentials.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center p-6 bg-[#f8fafc] dark:bg-[#020617] relative overflow-hidden">
+      <div className="absolute top-0 left-0 w-full h-1 bg-indigo-600"></div>
+      <div className="w-full max-w-[500px] bg-white dark:bg-slate-900 rounded-[56px] p-16 shadow-[0_60px_150px_rgba(0,0,0,0.15)] border dark:border-slate-800 animate-in zoom-in-95 fade-in duration-700 relative z-10">
+        <div className="flex flex-col items-center mb-16">
+           <div className="w-24 h-24 bg-indigo-600 rounded-[36px] flex items-center justify-center text-white mb-8 shadow-2xl shadow-indigo-500/40 transform -rotate-6"><Store className="w-12 h-12" /></div>
+           <h1 className="text-5xl font-black dark:text-white tracking-tighter">Satika ERP</h1>
+           <p className="text-slate-400 mt-3 font-black uppercase tracking-[0.4em] text-[10px]">Unified Business Portal</p>
         </div>
 
-        <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-6 scrollbar-thin scrollbar-thumb-slate-700">
-           {navGroups.map((group, idx) => (
-              <div key={idx}>
-                 {sidebarOpen && <div className="px-3 mb-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">{group.title}</div>}
-                 <div className="space-y-1">
-                    {group.items.map(item => (
-                       <button 
-                          key={item.id} 
-                          onClick={() => setCurrentView(item.id)}
-                          className={`w-full flex items-center px-3 py-2 rounded-lg transition-all group ${currentView === item.id ? 'bg-purple-600 text-white shadow-lg shadow-purple-900/50' : 'hover:bg-slate-800 hover:text-white'}`}
-                       >
-                          <item.icon className={`w-5 h-5 ${sidebarOpen ? 'mr-3' : 'mx-auto'}`} />
-                          {sidebarOpen && <span className="font-medium text-sm">{item.label}</span>}
-                       </button>
-                    ))}
-                 </div>
-              </div>
-           ))}
+        {error && (
+          <div className="mb-10 p-5 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-3xl text-xs font-black flex items-center gap-4 border border-red-100 dark:border-red-900/30 animate-in slide-in-from-top-2">
+            <AlertCircle className="w-6 h-6" /> {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-8">
+          <div className="space-y-3">
+            <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 ml-2">Work Identity</label>
+            <input 
+              type="email" 
+              required 
+              className="w-full p-6 bg-slate-50 dark:bg-slate-800/50 border-none rounded-3xl dark:text-white focus:ring-2 ring-indigo-500 transition-all text-sm font-bold shadow-inner" 
+              placeholder="admin@satika.com"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+            />
+          </div>
+          <div className="space-y-3">
+            <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 ml-2">Access Signature</label>
+            <input 
+              type="password" 
+              required 
+              className="w-full p-6 bg-slate-50 dark:bg-slate-800/50 border-none rounded-3xl dark:text-white focus:ring-2 ring-indigo-500 transition-all text-sm font-bold shadow-inner" 
+              placeholder="••••••••"
+              value={pass}
+              onChange={e => setPass(e.target.value)}
+            />
+          </div>
+          <button 
+            type="submit" 
+            disabled={loading}
+            className="w-full py-6 bg-indigo-600 text-white rounded-[32px] font-black uppercase tracking-[0.3em] shadow-[0_20px_60px_rgba(79,70,229,0.3)] hover:bg-indigo-700 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 mt-12 text-sm"
+          >
+            {loading ? <Loader2 className="w-7 h-7 animate-spin mx-auto" /> : 'Enter System'}
+          </button>
+        </form>
+        
+        <div className="mt-16 flex items-center justify-center gap-10">
+           <Facebook className="w-6 h-6 text-slate-200 hover:text-indigo-500 cursor-pointer transition-colors" />
+           <Instagram className="w-6 h-6 text-slate-200 hover:text-indigo-500 cursor-pointer transition-colors" />
+           <Mail className="w-6 h-6 text-slate-200 hover:text-indigo-500 cursor-pointer transition-colors" />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- APP CONTENT ---
+const AppContent = () => {
+  const { user, logout } = useContext(AuthContext);
+  const { isDarkMode, toggleTheme } = useContext(ThemeContext);
+  const [view, setView] = useState<'dash' | 'items' | 'bill' | 'purchase' | 'docs' | 'setup' | 'customers' | 'expenses'>('dash');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
+  const { data: products } = useCollection<Product>('products', 'name');
+  const { data: sales } = useCollection<Sale>('sales', 'date');
+  const { data: expenses } = useCollection<Expense>('expenses', 'date');
+
+  const navItems = [
+    { id: 'dash', label: 'Overview', icon: LayoutGrid },
+    { id: 'bill', label: 'Terminal', icon: ShoppingCart },
+    { id: 'items', label: 'Inventory', icon: Package },
+    { id: 'purchase', label: 'Procurement', icon: Truck },
+    { id: 'customers', label: 'Customers', icon: Users },
+    { id: 'expenses', label: 'Finance', icon: Wallet },
+    { id: 'docs', label: 'Vision AI', icon: FileText },
+    { id: 'setup', label: 'Configure', icon: Settings },
+  ];
+
+  return (
+    <div className="flex h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 overflow-hidden font-inter transition-colors duration-500">
+      {/* Sidebar */}
+      <aside className={`${isSidebarOpen ? 'w-80' : 'w-28'} bg-white dark:bg-slate-900 border-r dark:border-slate-800 flex flex-col transition-all duration-700 ease-in-out relative z-50 shadow-2xl dark:shadow-none`}>
+        <div className="p-10 flex items-center gap-6 overflow-hidden">
+          <div className="w-14 h-14 bg-indigo-600 rounded-[20px] flex items-center justify-center text-white shrink-0 shadow-2xl shadow-indigo-500/30 transform rotate-3"><Store className="w-7 h-7" /></div>
+          {isSidebarOpen && <h1 className="text-3xl font-black tracking-tighter truncate animate-in slide-in-from-left-4">Satika</h1>}
+        </div>
+
+        <nav className="flex-1 px-8 space-y-4 mt-8">
+          {navItems.map(item => (
+            <button
+              key={item.id}
+              onClick={() => setView(item.id as any)}
+              className={`w-full flex items-center gap-5 p-5 rounded-[24px] transition-all duration-300 group relative ${view === item.id ? 'bg-indigo-600 text-white shadow-2xl shadow-indigo-500/30' : 'text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-white'}`}
+            >
+              <item.icon className={`w-7 h-7 shrink-0 transition-transform group-hover:scale-110 ${view === item.id ? 'scale-110' : ''}`} />
+              {isSidebarOpen && <span className="font-black text-xs uppercase tracking-widest">{item.label}</span>}
+              {view === item.id && <div className="absolute left-0 top-1/2 -translate-y-1/2 w-2 h-8 bg-white rounded-r-full"></div>}
+            </button>
+          ))}
         </nav>
 
-        <div className="p-4 border-t border-slate-800 bg-[#151521]">
-           <button onClick={logout} className="flex items-center w-full text-sm text-red-400 hover:text-red-300 hover:bg-red-900/10 p-2 rounded-lg transition-colors">
-              <LogOut className={`w-5 h-5 ${sidebarOpen ? 'mr-3' : 'mx-auto'}`} />
-              {sidebarOpen && "Sign Out"}
-           </button>
+        <div className="p-10 space-y-6">
+          <button onClick={toggleTheme} className="w-full flex items-center gap-5 p-5 rounded-[24px] text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-all">
+            {isDarkMode ? <Sun className="w-7 h-7" /> : <Moon className="w-7 h-7" />}
+            {isSidebarOpen && <span className="font-black text-xs uppercase tracking-widest">{isDarkMode ? 'Light' : 'Dark'}</span>}
+          </button>
+          <button onClick={logout} className="w-full flex items-center gap-5 p-5 rounded-[24px] text-red-400 hover:bg-red-50 dark:hover:bg-red-900/10 transition-all">
+            <LogOut className="w-7 h-7" />
+            {isSidebarOpen && <span className="font-black text-xs uppercase tracking-widest">Exit</span>}
+          </button>
         </div>
       </aside>
 
-      <main className="flex-1 flex flex-col h-screen overflow-hidden">
-        {/* HEADER */}
-        <header className="h-16 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between px-6 shadow-sm z-10 shrink-0 no-print">
-          <div className="flex items-center gap-4">
-             <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"><Menu className="w-5 h-5 text-slate-500" /></button>
-             
-             {/* ORG SWITCHER */}
-             <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-slate-100 dark:bg-slate-700 rounded-lg border border-slate-200 dark:border-slate-600 cursor-pointer">
-                <Building2 className="w-4 h-4 text-purple-600" />
-                <span className="text-sm font-semibold dark:text-white">Inara Designs - Kochi</span>
-                <ChevronDown className="w-3 h-3 text-slate-400" />
-             </div>
+      {/* Main Content */}
+      <main className="flex-1 flex flex-col min-w-0 bg-slate-50 dark:bg-slate-950 relative">
+        <header className="h-28 bg-white dark:bg-slate-900 border-b dark:border-slate-800 px-12 flex justify-between items-center shrink-0 z-40 relative">
+          <div className="flex items-center gap-8">
+            <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-all shadow-sm">
+              <Menu className="w-6 h-6 text-slate-400" />
+            </button>
+            <div>
+               <h2 className="text-2xl font-black dark:text-white tracking-tight animate-in slide-in-from-top-4">
+                  {navItems.find(n => n.id === view)?.label}
+               </h2>
+               <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 mt-1">Operational Module v2.4.0</p>
+            </div>
           </div>
-
-          <div className="flex items-center gap-3">
-             <div className="relative hidden md:block">
-                <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-                <input placeholder="Global Search..." className="pl-9 pr-4 py-2 rounded-full bg-slate-100 dark:bg-slate-700 border-none text-sm focus:ring-2 focus:ring-purple-500 w-64" />
-             </div>
-             <button onClick={toggleTheme} className="p-2 text-slate-500 hover:text-purple-600 hover:bg-purple-50 dark:hover:bg-slate-700 rounded-full transition-colors">
-                {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-             </button>
-             <div className="w-9 h-9 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-md">
-                {user?.name?.substring(0,2).toUpperCase()}
-             </div>
+          
+          <div className="flex items-center gap-8">
+            <div className="hidden lg:flex items-center gap-4 px-8 py-4 bg-slate-50 dark:bg-slate-800 rounded-[24px] shadow-sm">
+               <Zap className="w-5 h-5 text-amber-500 animate-pulse" />
+               <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Node Sync Active</span>
+            </div>
+            <div className="flex items-center gap-6 pl-8 border-l dark:border-slate-800">
+               <div className="text-right hidden sm:block">
+                  <p className="text-sm font-black dark:text-white">{user?.name}</p>
+                  <p className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">{user?.role}</p>
+               </div>
+               <div className="w-14 h-14 bg-indigo-50 dark:bg-slate-800 rounded-[20px] flex items-center justify-center font-black text-indigo-600 dark:text-indigo-400 shadow-sm border-2 border-white dark:border-slate-700">{user?.name?.[0]}</div>
+            </div>
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-6 bg-slate-50 dark:bg-slate-900 relative">
-          <div className="max-w-7xl mx-auto pb-20">
-             {renderView()}
-          </div>
-        </div>
+        <section className="flex-1 overflow-y-auto p-12 custom-scrollbar bg-slate-50/30 dark:bg-slate-950/30">
+          {view === 'dash' && <DashboardView products={products} sales={sales} expenses={expenses} />}
+          {view === 'items' && <ItemsView products={products} />}
+          {view === 'bill' && <BillingView products={products} />}
+          {view === 'customers' && <CustomersView />}
+          {view === 'expenses' && <ExpensesView />}
+          {view === 'purchase' && <PurchasesView products={products} />}
+          {view === 'docs' && <DocumentsView />}
+          {view === 'setup' && <SetupView />}
+        </section>
 
-        {/* AI ASSISTANT FLOATING BUTTON */}
-        <AiAssistant dataContext={{ products, sales }} />
+        <AiAssistant data={{ products, sales, expenses }} />
       </main>
     </div>
   );
 };
 
-// --- APP ROOT ---
-
 const App = () => {
-  return (
-    <ThemeProvider>
-      <AuthProvider>
-        <AuthWrapper />
-      </AuthProvider>
-    </ThemeProvider>
-  );
-};
-
-const AuthWrapper = () => {
   const { user, loading } = useContext(AuthContext);
-  if (loading) return <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900"><Loader2 className="w-10 h-10 text-purple-600 animate-spin" /></div>;
-  if (!user) return <LoginScreen />;
-  return <AppContent />;
+
+  if (loading) return (
+    <div className="min-h-screen flex flex-col items-center justify-center bg-white dark:bg-slate-950">
+       <div className="relative">
+          <div className="w-24 h-24 border-8 border-indigo-100 dark:border-slate-800 border-t-indigo-600 rounded-full animate-spin"></div>
+          <div className="absolute inset-0 flex items-center justify-center">
+             <Store className="w-8 h-8 text-indigo-600 animate-pulse" />
+          </div>
+       </div>
+       <p className="mt-12 text-[10px] font-black uppercase tracking-[0.5em] text-slate-400 animate-pulse">Initializing Ecosystem...</p>
+    </div>
+  );
+
+  return user ? <AppContent /> : <LoginView />;
 };
 
-const root = createRoot(document.getElementById('root')!);
-root.render(<App />);
+const Root = () => (
+  <AuthProvider>
+    <ThemeProvider>
+      <App />
+    </ThemeProvider>
+  </AuthProvider>
+);
+
+createRoot(document.getElementById('root')!).render(<Root />);
