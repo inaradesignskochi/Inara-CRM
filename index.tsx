@@ -137,7 +137,7 @@ const ThemeContext = createContext<ThemeContextType>(null!);
 
 // --- PROVIDERS ---
 
-const AuthProvider = ({ children }: { children: React.ReactNode }) => {
+const AuthProvider = ({ children }: { children?: React.ReactNode }) => {
   const [user, setUser] = useState<AppUser | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -201,7 +201,7 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   );
 };
 
-const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
+const ThemeProvider = ({ children }: { children?: React.ReactNode }) => {
   const [isDarkMode, setIsDarkMode] = useState(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem('theme') === 'dark' || 
@@ -250,7 +250,7 @@ const LoginScreen = () => {
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col justify-center items-center p-4">
       <div className="max-w-md w-full bg-white dark:bg-slate-800 rounded-2xl shadow-xl p-8 border border-slate-200 dark:border-slate-700">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">SATIKA ERP</h1>
+          <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">INARA DESIGNS</h1>
           <p className="text-slate-500 dark:text-slate-400">Sign in to your account</p>
         </div>
         
@@ -291,7 +291,7 @@ const LoginScreen = () => {
           </button>
         </form>
         <div className="mt-6 text-center text-xs text-slate-400">
-           Enter your registered Satika ERP credentials.
+           Enter your registered INARA DESIGNS credentials.
         </div>
       </div>
     </div>
