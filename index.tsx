@@ -12,7 +12,8 @@ import {
   Filter, ArrowLeft, MessageSquare, Send, Sparkles, MoreHorizontal, DollarSign, TrendingUp, 
   Activity, Trash2, Save, Download, Store, Link as LinkIcon, LogOut, CreditCard, Facebook, 
   Instagram, ChevronDown, ChevronRight, FileText, Truck, ClipboardList, Scan, Shield, Zap, 
-  Database, Globe, Mail, Moon, Sun, Lock, Loader2, AlertCircle, Printer, History, CheckCircle, Upload
+  Database, Globe, Mail, Moon, Sun, Lock, Loader2, AlertCircle, Printer, History, CheckCircle, Upload,
+  Wallet, PieChart as PieChartIcon, UserPlus, Phone, MapPin
 } from 'lucide-react';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, 
@@ -56,7 +57,18 @@ type Expense = {
   description: string;
   amount: number;
   category: string;
-  assignedTo: string;
+  paymentMethod: string;
+  recordedBy: string;
+};
+
+type Customer = {
+  id: string;
+  name: string;
+  phone: string;
+  email: string;
+  address: string;
+  totalSpent: number;
+  lastVisit: string;
 };
 
 type Sale = {
@@ -64,6 +76,7 @@ type Sale = {
   date: string; // ISO string
   createdAt?: any;
   customer: string;
+  customerId?: string;
   amount: number;
   items: CartItem[];
   channel: string;
@@ -353,6 +366,203 @@ function useFirestoreCollection<T>(collectionName: string, orderField?: string) 
 
 // --- SUB-VIEWS ---
 
+const ExpensesView = () => {
+  const { user } = useContext(AuthContext);
+  const { data: expenses, loading } = useFirestoreCollection<Expense>('expenses', 'date');
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [newExpense, setNewExpense] = useState({ description: '', amount: '', category: 'Operational', paymentMethod: 'Cash' });
+
+  const handleAddExpense = async () => {
+    if(!newExpense.description || !newExpense.amount) return;
+    try {
+      await addDoc(collection(db, 'expenses'), {
+        ...newExpense,
+        amount: Number(newExpense.amount),
+        date: new Date().toISOString(),
+        recordedBy: user?.email
+      });
+      await logAudit(user, 'CREATE_EXPENSE', `Added expense: ${newExpense.description} - ₹${newExpense.amount}`);
+      setShowAddModal(false);
+      setNewExpense({ description: '', amount: '', category: 'Operational', paymentMethod: 'Cash' });
+    } catch(e) {
+      console.error("Error adding expense", e);
+    }
+  };
+
+  const handleDeleteExpense = async (id: string, desc: string) => {
+     if(user?.role !== 'Owner') return alert("Only Owners can delete expenses");
+     if(confirm("Delete this expense record?")) {
+        await deleteDoc(doc(db, 'expenses', id));
+        await logAudit(user, 'DELETE_EXPENSE', `Deleted expense: ${desc}`);
+     }
+  };
+
+  const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
+
+  return (
+    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+      <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center bg-red-50/30 dark:bg-red-900/10">
+        <div>
+           <h2 className="text-red-800 dark:text-red-300 font-bold text-lg flex items-center gap-2">
+             <Wallet className="w-5 h-5" /> Expenses
+           </h2>
+           <p className="text-xs text-red-600 dark:text-red-400 mt-1">Total: ₹{totalExpenses.toLocaleString()}</p>
+        </div>
+        <button 
+           onClick={() => setShowAddModal(true)}
+           className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700 shadow-sm"
+        >
+           <Plus className="w-4 h-4" /> New Expense
+        </button>
+      </div>
+
+      {showAddModal && (
+         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+            <div className="bg-white dark:bg-slate-800 p-6 rounded-xl w-full max-w-md shadow-2xl">
+               <h3 className="text-lg font-bold mb-4 dark:text-white">Record Expense</h3>
+               <div className="space-y-3">
+                  <input className="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" placeholder="Description" value={newExpense.description} onChange={e => setNewExpense({...newExpense, description: e.target.value})} />
+                  <input type="number" className="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" placeholder="Amount (₹)" value={newExpense.amount} onChange={e => setNewExpense({...newExpense, amount: e.target.value})} />
+                  <div className="flex gap-3">
+                     <select className="flex-1 p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" value={newExpense.category} onChange={e => setNewExpense({...newExpense, category: e.target.value})}>
+                        <option>Operational</option>
+                        <option>Salary</option>
+                        <option>Marketing</option>
+                        <option>Utilities</option>
+                        <option>Restocking</option>
+                        <option>Other</option>
+                     </select>
+                     <select className="flex-1 p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" value={newExpense.paymentMethod} onChange={e => setNewExpense({...newExpense, paymentMethod: e.target.value})}>
+                        <option>Cash</option>
+                        <option>UPI</option>
+                        <option>Bank Transfer</option>
+                        <option>Card</option>
+                     </select>
+                  </div>
+               </div>
+               <div className="flex gap-3 mt-6">
+                  <button onClick={() => setShowAddModal(false)} className="flex-1 py-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg">Cancel</button>
+                  <button onClick={handleAddExpense} className="flex-1 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">Save</button>
+               </div>
+            </div>
+         </div>
+      )}
+
+      <div className="overflow-x-auto">
+         <table className="w-full text-left text-sm text-slate-600 dark:text-slate-400">
+            <thead className="bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white font-semibold border-b border-slate-200 dark:border-slate-700">
+               <tr>
+                  <th className="px-6 py-3">Date</th>
+                  <th className="px-6 py-3">Description</th>
+                  <th className="px-6 py-3">Category</th>
+                  <th className="px-6 py-3">Method</th>
+                  <th className="px-6 py-3 text-right">Amount</th>
+                  <th className="px-6 py-3 w-10"></th>
+               </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+               {expenses.map(exp => (
+                  <tr key={exp.id} className="hover:bg-slate-50 dark:hover:bg-slate-700">
+                     <td className="px-6 py-3">{new Date(exp.date).toLocaleDateString()}</td>
+                     <td className="px-6 py-3 font-medium text-slate-900 dark:text-white">{exp.description}</td>
+                     <td className="px-6 py-3"><span className="px-2 py-1 bg-slate-100 dark:bg-slate-700 rounded-full text-xs">{exp.category}</span></td>
+                     <td className="px-6 py-3">{exp.paymentMethod}</td>
+                     <td className="px-6 py-3 text-right font-medium text-red-600 dark:text-red-400">-₹{exp.amount}</td>
+                     <td className="px-6 py-3 text-right">
+                        <button onClick={() => handleDeleteExpense(exp.id, exp.description)} className="text-slate-400 hover:text-red-500">
+                           <Trash2 className="w-4 h-4" />
+                        </button>
+                     </td>
+                  </tr>
+               ))}
+            </tbody>
+         </table>
+      </div>
+    </div>
+  );
+};
+
+const CustomersView = () => {
+   const { user } = useContext(AuthContext);
+   const { data: customers } = useFirestoreCollection<Customer>('customers', 'name');
+   const [showModal, setShowModal] = useState(false);
+   const [newCustomer, setNewCustomer] = useState({ name: '', phone: '', email: '', address: '' });
+
+   const handleAddCustomer = async () => {
+      if(!newCustomer.name || !newCustomer.phone) return;
+      await addDoc(collection(db, 'customers'), {
+         ...newCustomer,
+         totalSpent: 0,
+         lastVisit: new Date().toISOString()
+      });
+      setShowModal(false);
+      setNewCustomer({ name: '', phone: '', email: '', address: '' });
+      await logAudit(user, 'CREATE_CUSTOMER', `Added customer: ${newCustomer.name}`);
+   };
+
+   return (
+      <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+         <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center bg-blue-50/30 dark:bg-blue-900/10">
+            <h2 className="text-blue-800 dark:text-blue-300 font-bold text-lg flex items-center gap-2">
+               <Users className="w-5 h-5" /> Customers
+            </h2>
+            <button onClick={() => setShowModal(true)} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
+               <UserPlus className="w-4 h-4" /> Add Customer
+            </button>
+         </div>
+
+         {showModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+               <div className="bg-white dark:bg-slate-800 p-6 rounded-xl w-full max-w-md shadow-2xl">
+                  <h3 className="text-lg font-bold mb-4 dark:text-white">New Customer</h3>
+                  <div className="space-y-3">
+                     <input className="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" placeholder="Full Name" value={newCustomer.name} onChange={e => setNewCustomer({...newCustomer, name: e.target.value})} />
+                     <input className="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" placeholder="Phone Number" value={newCustomer.phone} onChange={e => setNewCustomer({...newCustomer, phone: e.target.value})} />
+                     <input className="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" placeholder="Email (Optional)" value={newCustomer.email} onChange={e => setNewCustomer({...newCustomer, email: e.target.value})} />
+                     <textarea className="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" placeholder="Address" rows={3} value={newCustomer.address} onChange={e => setNewCustomer({...newCustomer, address: e.target.value})} />
+                  </div>
+                  <div className="flex gap-3 mt-6">
+                     <button onClick={() => setShowModal(false)} className="flex-1 py-2 text-slate-500">Cancel</button>
+                     <button onClick={handleAddCustomer} className="flex-1 py-2 bg-blue-600 text-white rounded-lg">Save</button>
+                  </div>
+               </div>
+            </div>
+         )}
+
+         <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm text-slate-600 dark:text-slate-400">
+               <thead className="bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white font-semibold border-b border-slate-200 dark:border-slate-700">
+                  <tr>
+                     <th className="px-6 py-3">Customer</th>
+                     <th className="px-6 py-3">Contact</th>
+                     <th className="px-6 py-3">Location</th>
+                     <th className="px-6 py-3 text-right">Total Spend</th>
+                  </tr>
+               </thead>
+               <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                  {customers.map(c => (
+                     <tr key={c.id} className="hover:bg-slate-50 dark:hover:bg-slate-700">
+                        <td className="px-6 py-3">
+                           <p className="font-medium text-slate-900 dark:text-white">{c.name}</p>
+                           <p className="text-xs text-slate-500">Last visit: {new Date(c.lastVisit).toLocaleDateString()}</p>
+                        </td>
+                        <td className="px-6 py-3">
+                           <div className="flex flex-col gap-1">
+                              <span className="flex items-center gap-1 text-xs"><Phone className="w-3 h-3" /> {c.phone}</span>
+                              {c.email && <span className="flex items-center gap-1 text-xs"><Mail className="w-3 h-3" /> {c.email}</span>}
+                           </div>
+                        </td>
+                        <td className="px-6 py-3 text-xs max-w-xs truncate">{c.address || '-'}</td>
+                        <td className="px-6 py-3 text-right font-bold text-emerald-600 dark:text-emerald-400">₹{c.totalSpent.toLocaleString()}</td>
+                     </tr>
+                  ))}
+               </tbody>
+            </table>
+         </div>
+      </div>
+   );
+};
+
 const ItemsView = ({ products }: { products: Product[] }) => {
   const { user } = useContext(AuthContext);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -590,12 +800,20 @@ const ItemsView = ({ products }: { products: Product[] }) => {
 
 const BillingView = ({ products }: { products: Product[] }) => {
   const { user } = useContext(AuthContext);
+  const { data: customers } = useFirestoreCollection<Customer>('customers', 'name');
+  
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [customerName, setCustomerName] = useState('');
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [customerSearch, setCustomerSearch] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [lastInvoice, setLastInvoice] = useState<Sale | null>(null);
 
   const filteredProducts = products.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()));
+  
+  const filteredCustomers = customers.filter(c => 
+     c.name.toLowerCase().includes(customerSearch.toLowerCase()) || 
+     c.phone.includes(customerSearch)
+  ).slice(0, 5);
 
   const addToCart = (product: Product) => {
     if (product.stock <= 0) return alert("Item out of stock!");
@@ -624,7 +842,8 @@ const BillingView = ({ products }: { products: Product[] }) => {
     const saleData = {
       date: new Date().toISOString(),
       createdAt: serverTimestamp(),
-      customer: customerName || 'Walk-in',
+      customer: selectedCustomer ? selectedCustomer.name : (customerSearch || 'Walk-in'),
+      customerId: selectedCustomer?.id || null,
       amount: cartTotal,
       items: cart,
       channel: 'Store'
@@ -634,13 +853,23 @@ const BillingView = ({ products }: { products: Product[] }) => {
       // 1. Write Sale
       const saleRef = await addDoc(collection(db, 'sales'), saleData);
       
-      // 2. Update Inventory (Atomic)
+      // 2. Update Inventory & Customer Stats (Atomic)
       const batch = writeBatch(db);
+      
       cart.forEach(item => {
          const productRef = doc(db, 'products', item.id);
          const newStock = Math.max(0, item.stock - item.qty);
          batch.update(productRef, { stock: newStock });
       });
+
+      if (selectedCustomer) {
+         const customerRef = doc(db, 'customers', selectedCustomer.id);
+         batch.update(customerRef, {
+            totalSpent: selectedCustomer.totalSpent + cartTotal,
+            lastVisit: new Date().toISOString()
+         });
+      }
+
       await batch.commit();
 
       // 3. Log
@@ -649,7 +878,8 @@ const BillingView = ({ products }: { products: Product[] }) => {
       // 4. Reset & Print
       setLastInvoice({ ...saleData, id: saleRef.id } as Sale);
       setCart([]);
-      setCustomerName('');
+      setSelectedCustomer(null);
+      setCustomerSearch('');
       
       // Trigger Print after short delay
       setTimeout(() => window.print(), 500);
@@ -740,13 +970,44 @@ const BillingView = ({ products }: { products: Product[] }) => {
                <span>Total</span>
                <span>₹{cartTotal.toLocaleString()}</span>
             </div>
-            <input 
-               type="text" 
-               placeholder="Customer Name (Optional)" 
-               className="w-full px-4 py-2 border border-slate-200 dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-800 dark:text-white focus:outline-none focus:border-emerald-500"
-               value={customerName}
-               onChange={e => setCustomerName(e.target.value)}
-            />
+            
+            {/* Customer Search / Input */}
+            <div className="relative">
+               {selectedCustomer ? (
+                  <div className="flex justify-between items-center p-2 bg-blue-50 dark:bg-blue-900/20 text-blue-800 dark:text-blue-300 rounded-lg text-sm">
+                     <span className="font-medium">{selectedCustomer.name}</span>
+                     <button onClick={() => setSelectedCustomer(null)}><X className="w-4 h-4" /></button>
+                  </div>
+               ) : (
+                  <>
+                     <div className="relative">
+                        <UserPlus className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+                        <input 
+                           type="text" 
+                           placeholder="Select or type customer name..." 
+                           className="w-full pl-9 pr-4 py-2 border border-slate-200 dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-800 dark:text-white focus:outline-none focus:border-emerald-500"
+                           value={customerSearch}
+                           onChange={e => setCustomerSearch(e.target.value)}
+                        />
+                     </div>
+                     {customerSearch && filteredCustomers.length > 0 && (
+                        <div className="absolute w-full mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg z-10">
+                           {filteredCustomers.map(c => (
+                              <button 
+                                 key={c.id} 
+                                 onClick={() => { setSelectedCustomer(c); setCustomerSearch(''); }}
+                                 className="w-full text-left p-2 hover:bg-slate-50 dark:hover:bg-slate-700 text-sm dark:text-white"
+                              >
+                                 <p className="font-medium">{c.name}</p>
+                                 <p className="text-xs text-slate-500">{c.phone}</p>
+                              </button>
+                           ))}
+                        </div>
+                     )}
+                  </>
+               )}
+            </div>
+
             <button 
                onClick={handleCompleteSale}
                disabled={cart.length === 0}
@@ -1142,19 +1403,30 @@ const AppContent = () => {
   // State
   const [currentView, setCurrentView] = useState('home');
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [globalSearch, setGlobalSearch] = useState('');
 
   // Computed Stats
   const totalRevenue = sales.reduce((sum, s) => sum + s.amount, 0);
   const lowStockCount = products.filter(p => p.stock < 5).length;
+  
+  const chartData = useMemo(() => {
+     // Aggregate sales by date
+     const map = new Map();
+     sales.forEach(s => {
+        const d = new Date(s.date).toLocaleDateString();
+        map.set(d, (map.get(d) || 0) + s.amount);
+     });
+     return Array.from(map.entries()).map(([name, value]) => ({ name, value })).sort((a,b) => new Date(a.name).getTime() - new Date(b.name).getTime()).slice(-7);
+  }, [sales]);
 
   const Sidebar = () => {
     const navItems = [
       { id: 'dashboard', label: 'Home', icon: LayoutGrid, allowed: true },
       { id: 'items_list', label: 'Items', icon: Package, allowed: true },
       { id: 'billing', label: 'POS / Billing', icon: ShoppingCart, allowed: true },
+      { id: 'customers', label: 'Customers', icon: Users, allowed: true },
       { id: 'sales_orders', label: 'Sales History', icon: History, allowed: true },
-      { id: 'purchases', label: 'Purchases', icon: Truck, allowed: user?.role !== 'Worker' }, // NEW
+      { id: 'purchases', label: 'Purchases', icon: Truck, allowed: user?.role !== 'Worker' },
+      { id: 'expenses', label: 'Expenses', icon: Wallet, allowed: user?.role !== 'Worker' },
       { id: 'documents', label: 'Documents', icon: FileText, allowed: true },
       { id: 'settings', label: 'Setup', icon: Settings, allowed: user?.role === 'Owner' || user?.role === 'Admin' },
     ];
@@ -1210,6 +1482,38 @@ const AppContent = () => {
           </div>
         ))}
       </div>
+
+      {/* CHARTS */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+         {/* Sales Trend */}
+         <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm h-80">
+            <h3 className="font-bold text-slate-800 dark:text-white mb-4">Sales Trend (Last 7 Days)</h3>
+            <ResponsiveContainer width="100%" height="100%">
+               <AreaChart data={chartData}>
+                  <defs>
+                     <linearGradient id="colorVal" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.8}/>
+                        <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                     </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#374151" opacity={0.2} />
+                  <XAxis dataKey="name" stroke="#9ca3af" fontSize={12} tickLine={false} axisLine={false} />
+                  <YAxis stroke="#9ca3af" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(v) => `₹${v}`} />
+                  <RechartsTooltip 
+                     contentStyle={{ backgroundColor: '#1f2937', borderColor: '#374151', color: '#f3f4f6' }}
+                     itemStyle={{ color: '#10b981' }}
+                  />
+                  <Area type="monotone" dataKey="value" stroke="#10b981" fillOpacity={1} fill="url(#colorVal)" />
+               </AreaChart>
+            </ResponsiveContainer>
+         </div>
+
+         {/* Sales by Category (Simple Mock for visual balance) */}
+         <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm h-80 flex flex-col items-center justify-center">
+             <PieChartIcon className="w-16 h-16 text-slate-300 dark:text-slate-600 mb-4" />
+             <p className="text-slate-500 dark:text-slate-400 text-sm text-center">Category analytics will appear here once sufficient data is available.</p>
+         </div>
+      </div>
     </div>
   );
 
@@ -1219,6 +1523,8 @@ const AppContent = () => {
       case 'settings': return <SetupView />;
       case 'items_list': return <ItemsView products={products} />;
       case 'billing': return <BillingView products={products} />;
+      case 'customers': return <CustomersView />;
+      case 'expenses': return <ExpensesView />;
       case 'sales_orders': return <SalesOrdersView />;
       case 'purchases': return <PurchasesView products={products} />;
       case 'documents': return <div className="p-10 text-center dark:text-white">Document Management System</div>;
