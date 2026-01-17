@@ -1,13 +1,12 @@
 
 import React, { useState, useEffect, useRef, useMemo, createContext, useContext } from 'react';
 import { createRoot } from 'react-dom/client';
-import { GoogleGenAI } from "@google/genai";
-import { initializeApp } from "firebase/app";
-import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
-import { 
-  getFirestore, collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, 
-  query, orderBy, serverTimestamp, writeBatch, getDoc, setDoc, limit
-} from "firebase/firestore";
+// Always use import {GoogleGenAI} from "@google/genai";
+import {GoogleGenAI} from '@google/genai';
+// Consolidated and updated Firebase imports to ensure named exports are correctly recognized
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, query, orderBy, serverTimestamp, writeBatch, getDoc, setDoc, limit } from 'firebase/firestore';
 import { 
   LayoutGrid, Users, ShoppingCart, Package, Settings, Search, Menu, X, Plus, 
   Filter, MessageSquare, Send, Sparkles, DollarSign, TrendingUp, 
@@ -813,7 +812,7 @@ const DocumentsView = () => {
                  <div className="w-12 h-1 bg-slate-200 dark:bg-slate-700 rounded-full"></div>
               </div>
               <div className="h-5 bg-slate-200 dark:bg-slate-800 rounded-full w-3/4 mb-4 animate-pulse"></div>
-              <div className="h-3 bg-slate-100 dark:bg-slate-900 rounded-full w-1/2 animate-pulse"></div>
+              <div className="h-3 bg-slate-100 dark:bg- Thompson rounded-full w-1/2 animate-pulse"></div>
               <div className="mt-8 flex justify-between items-center">
                  <div className="px-3 py-1 bg-indigo-50 dark:bg-indigo-900/20 text-[10px] font-black text-indigo-600 uppercase tracking-widest rounded-lg">Processing</div>
                  <Loader2 className="w-4 h-4 animate-spin text-indigo-500" />
@@ -828,7 +827,7 @@ const DocumentsView = () => {
 
 const AiAssistant = ({ data }: { data: any }) => {
   const [open, setOpen] = useState(false);
-  const [msg, setMsg] = useState<{r: 'ai'|'me', t: string}[]>([{r: 'ai', t: 'Greetings. I am Inara ERP Intelligence. I am ready to provide deep analysis on your sales metrics, stock velocity, and financial standing. How can I assist you today?'}]);
+  const [msg, setMsg] = useState<{r: 'ai'|'me', t: string}[]>([{r: 'ai', t: 'Greetings. I am INARA ERP Intelligence. I am ready to provide deep analysis on your sales metrics, stock velocity, and financial standing. How can I assist you today?'}]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -839,19 +838,19 @@ const AiAssistant = ({ data }: { data: any }) => {
     setMsg(p => [...p, { r: 'me', t: txt }]);
     setInput(''); setBusy(true);
     try {
-      // Corrected Gemini API initialization to use named parameter and direct process.env.API_KEY
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      // Create a new GoogleGenAI instance right before making an API call to ensure it always uses the most up-to-date API key
+      const ai = new GoogleGenAI({apiKey: process.env.API_KEY});
       const contextInfo = `The business currently has ${data.products.length} types of products in inventory and has recorded ${data.sales.length} sales transactions. Revenue stands at ₹${data.sales.reduce((s: number, i: any) => s + i.amount, 0).toLocaleString()}. Expenses total ₹${data.expenses.reduce((s: number, i: any) => s + i.amount, 0).toLocaleString()}. Profit is ₹${(data.sales.reduce((s: number, i: any) => s + i.amount, 0) - data.expenses.reduce((s: number, i: any) => s + i.amount, 0)).toLocaleString()}.`;
       
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: `${contextInfo}\n\nUser Question: ${txt}`,
         config: {
-            systemInstruction: "You are Inara ERP Intelligence, a senior corporate consultant for a high-end saree and textile brand. Analyze the provided ERP context and offer strategic, data-driven advice. Use professional business terminology. Keep it insightful yet concise.",
+            systemInstruction: "You are INARA ERP Intelligence, a senior corporate consultant for a high-end saree and textile brand. Analyze the provided ERP context and offer strategic, data-driven advice. Use professional business terminology. Keep it insightful yet concise.",
         }
       });
       
-      // Access text directly as a property from the response
+      // Access response.text as a property, strictly following extracts text guidelines
       setMsg(p => [...p, { r: 'ai', t: response.text || "Connection to neural intelligence lost. Retrying..." }]);
     } catch (e) {
       console.error("AI Error:", e);
@@ -876,7 +875,7 @@ const AiAssistant = ({ data }: { data: any }) => {
             <div className="flex items-center gap-5 relative">
                <div className="w-14 h-14 bg-white/20 rounded-[24px] flex items-center justify-center"><Sparkles className="w-7 h-7" /></div>
                <div>
-                  <h3 className="text-xl tracking-tight">Inara Intelligence</h3>
+                  <h3 className="text-xl tracking-tight">INARA Intelligence</h3>
                   <p className="text-[10px] text-indigo-200 font-black uppercase tracking-[0.3em]">Business Analytics Agent</p>
                </div>
             </div>
@@ -936,7 +935,7 @@ const LoginView = () => {
       <div className="w-full max-w-[500px] bg-white dark:bg-slate-900 rounded-[56px] p-16 shadow-[0_60px_150px_rgba(0,0,0,0.15)] border dark:border-slate-800 animate-in zoom-in-95 fade-in duration-700 relative z-10">
         <div className="flex flex-col items-center mb-16">
            <div className="w-24 h-24 bg-indigo-600 rounded-[36px] flex items-center justify-center text-white mb-8 shadow-2xl shadow-indigo-500/40 transform -rotate-6"><Store className="w-12 h-12" /></div>
-           <h1 className="text-5xl font-black dark:text-white tracking-tighter">Satika ERP</h1>
+           <h1 className="text-5xl font-black dark:text-white tracking-tighter">INARA ERP</h1>
            <p className="text-slate-400 mt-3 font-black uppercase tracking-[0.4em] text-[10px]">Unified Business Portal</p>
         </div>
 
@@ -953,7 +952,7 @@ const LoginView = () => {
               type="email" 
               required 
               className="w-full p-6 bg-slate-50 dark:bg-slate-800/50 border-none rounded-3xl dark:text-white focus:ring-2 ring-indigo-500 transition-all text-sm font-bold shadow-inner" 
-              placeholder="admin@satika.com"
+              placeholder="admin@inaradesigns.com"
               value={email}
               onChange={e => setEmail(e.target.value)}
             />
@@ -1016,7 +1015,7 @@ const AppContent = () => {
       <aside className={`${isSidebarOpen ? 'w-80' : 'w-28'} bg-white dark:bg-slate-900 border-r dark:border-slate-800 flex flex-col transition-all duration-700 ease-in-out relative z-50 shadow-2xl dark:shadow-none`}>
         <div className="p-10 flex items-center gap-6 overflow-hidden">
           <div className="w-14 h-14 bg-indigo-600 rounded-[20px] flex items-center justify-center text-white shrink-0 shadow-2xl shadow-indigo-500/30 transform rotate-3"><Store className="w-7 h-7" /></div>
-          {isSidebarOpen && <h1 className="text-3xl font-black tracking-tighter truncate animate-in slide-in-from-left-4">Satika</h1>}
+          {isSidebarOpen && <h1 className="text-3xl font-black tracking-tighter truncate animate-in slide-in-from-left-4 uppercase">Inara</h1>}
         </div>
 
         <nav className="flex-1 px-8 space-y-4 mt-8">
