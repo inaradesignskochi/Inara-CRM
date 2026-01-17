@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useMemo, createContext, useContext } from 'react';
 import { createRoot } from 'react-dom/client';
 import { GoogleGenAI } from '@google/genai';
@@ -113,17 +112,25 @@ const AuthProvider = ({ children }: { children?: React.ReactNode }) => {
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        const userSnap = await getDoc(doc(db, "users", firebaseUser.uid));
-        if (userSnap.exists()) {
-          setUser({ id: firebaseUser.uid, ...userSnap.data() } as AppUser);
+      try {
+        if (firebaseUser) {
+          const userSnap = await getDoc(doc(db, "users", firebaseUser.uid));
+          if (userSnap.exists()) {
+            setUser({ id: firebaseUser.uid, ...userSnap.data() } as AppUser);
+          } else {
+            const defaultData = { email: firebaseUser.email || '', name: 'User', role: 'Worker' as Role };
+            await setDoc(doc(db, "users", firebaseUser.uid), defaultData);
+            setUser({ id: firebaseUser.uid, ...defaultData });
+          }
         } else {
-          const defaultData = { email: firebaseUser.email || '', name: 'User', role: 'Worker' as Role };
-          await setDoc(doc(db, "users", firebaseUser.uid), defaultData);
-          setUser({ id: firebaseUser.uid, ...defaultData });
+          setUser(null);
         }
-      } else setUser(null);
-      setLoading(false);
+      } catch (err) {
+        console.error("Auth init error:", err);
+        setUser(null);
+      } finally {
+        setLoading(false);
+      }
     });
   }, []);
 
@@ -147,10 +154,16 @@ function useCollection<T>(name: string, sortField: string = 'date', limitCount: 
   const [data, setData] = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
-    return onSnapshot(query(collection(db, name), orderBy(sortField, 'desc'), limit(limitCount)), (snap) => {
+    setLoading(true);
+    const q = query(collection(db, name), orderBy(sortField, 'desc'), limit(limitCount));
+    const unsubscribe = onSnapshot(q, (snap) => {
       setData(snap.docs.map(d => ({ id: d.id, ...d.data() } as T)));
       setLoading(false);
+    }, (error) => {
+      console.error(`Error fetching collection ${name}:`, error);
+      setLoading(false);
     });
+    return unsubscribe;
   }, [name, sortField, limitCount]);
   return { data, loading };
 }
@@ -926,9 +939,6 @@ const SetupView = () => {
     </div>
   );
 };
-
-// ... Rest of the components (DashboardView, ItemsView, BillingView, CustomersView, ExpensesView, DocumentsView, AiAssistant, LoginView, AppContent, App, Root) 
-// were already in the project's logic and need to be kept intact or restored to full functionality ...
 
 const CustomersView = () => {
   const { data: customers } = useCollection<Customer>('customers', 'name');
